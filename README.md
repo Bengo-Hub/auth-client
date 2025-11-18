@@ -45,8 +45,8 @@ import (
 
 // Initialize validator
 config := authclient.DefaultConfig(
-    "https://auth.bengobox.local/api/v1/.well-known/jwks.json",
-    "https://auth.bengobox.local",
+    "https://sso.codevertexitsolutions.com/api/v1/.well-known/jwks.json",
+    "https://sso.codevertexitsolutions.com",
     "bengobox",
 )
 validator, err := authclient.NewValidator(config)
@@ -115,8 +115,8 @@ router.Use(authclient.GinRequireScope("read:orders", "write:orders"))
 
 ```go
 config := authclient.Config{
-    JWKSUrl:         "https://auth.bengobox.local/api/v1/.well-known/jwks.json",
-    Issuer:          "https://auth.bengobox.local",
+    JWKSUrl:         "https://sso.codevertexitsolutions.com/api/v1/.well-known/jwks.json",
+    Issuer:          "https://sso.codevertexitsolutions.com",
     Audience:        "bengobox",
     CacheTTL:        1 * time.Hour,        // How long to cache JWKS
     RefreshInterval: 5 * time.Minute,      // Background refresh interval

@@ -162,10 +162,10 @@ Each service needs these environment variables:
 
 ```bash
 # Auth Service Configuration
-AUTH_SERVICE_URL=https://auth.bengobox.local
-AUTH_ISSUER=https://auth.bengobox.local
+AUTH_SERVICE_URL=https://sso.codevertexitsolutions.com
+AUTH_ISSUER=https://sso.codevertexitsolutions.com
 AUTH_AUDIENCE=bengobox
-AUTH_JWKS_URL=https://auth.bengobox.local/api/v1/.well-known/jwks.json
+AUTH_JWKS_URL=https://sso.codevertexitsolutions.com/api/v1/.well-known/jwks.json
 
 # Optional: Cache configuration
 AUTH_JWKS_CACHE_TTL=3600s

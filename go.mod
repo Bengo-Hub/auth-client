@@ -1,4 +1,4 @@
-module github.com/bengobox/shared/auth-client
+module github.com/Bengo-Hub/shared-auth-client
 
 go 1.24.0
 

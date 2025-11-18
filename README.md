@@ -2,25 +2,34 @@
 
 A Go library for validating JWT tokens issued by auth-service using JWKS. This library is shared across all BengoBox microservices for consistent authentication and authorization.
 
+**Repository:** `github.com/Bengo-Hub/shared-auth-client`
+
 ## Installation
 
-### Local Development (Go Workspace)
+### Production (Recommended)
 
-The repository uses `go.work` at the root for local development. No additional setup needed:
-
-```bash
-# At repository root
-go work use ./shared/auth-client
-```
-
-### Production (Private Go Module)
-
-For production deployments, consume as a private Go module:
+Import as a Go module in your service:
 
 ```go
 require (
-    github.com/bengobox/shared/auth-client v0.1.0
+    github.com/Bengo-Hub/shared-auth-client v0.1.0
 )
+```
+
+### Local Development (Go Workspace)
+
+When developing locally, clone all repositories into a parent directory (e.g., `BengoBox/`) and use `go.work`:
+
+```bash
+# Clone repositories
+cd BengoBox/
+git clone https://github.com/Bengo-Hub/shared-auth-client.git shared/auth-client
+git clone https://github.com/Bengo-Hub/cafe-backend.git Cafe/cafe-backend
+# ... clone other services
+
+# Create go.work at BengoBox root
+cd BengoBox/
+go work init ./shared/auth-client ./Cafe/cafe-backend ./notifications-app
 ```
 
 See [DEPLOYMENT.md](./DEPLOYMENT.md) for detailed deployment strategies and CI/CD configuration.
@@ -31,8 +40,7 @@ See [DEPLOYMENT.md](./DEPLOYMENT.md) for detailed deployment strategies and CI/C
 
 ```go
 import (
-    "github.com/bengobox/shared/auth-client"
-    authclient "github.com/bengobox/shared/auth-client"
+    authclient "github.com/Bengo-Hub/shared-auth-client"
 )
 
 // Initialize validator
@@ -71,7 +79,7 @@ tenantID, _ := claims.TenantUUID()
 
 ```go
 import (
-    authclient "github.com/bengobox/shared/auth-client"
+    authclient "github.com/Bengo-Hub/shared-auth-client"
     "github.com/gin-gonic/gin"
 )
 

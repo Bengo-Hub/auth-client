@@ -1,55 +1,81 @@
 # Tagging and Versioning Guide
 
-## Current Approach: Monorepo with Replace Directives
+## Repository Structure
 
-Since `shared/auth-client` is part of the BengoBox monorepo, we use `replace` directives in all service `go.mod` files.
+**Important:** `shared-auth-client` is an **independent GitHub repository** (`github.com/Bengo-Hub/shared-auth-client`) in the Bengo-Hub organization. Each BengoBox service (cafe-backend, notifications-app, etc.) is also an independent repository. The `BengoBox` folder is just a local root directory where developers clone repositories - it is **not** a monorepo.
 
 ## Tagging the Library
 
 ### Step 1: Tag the Repository
 
-Tag the entire BengoBox repository with a version tag:
+Tag the `shared-auth-client` repository:
 
 ```bash
-# At repository root
-git tag shared-auth-client/v0.1.0
-git push origin shared-auth-client/v0.1.0
+# In the shared-auth-client repository
+cd shared-auth-client/
+git tag v0.1.0
+git push origin v0.1.0
 ```
 
 ### Step 2: Update Service go.mod Files
 
-All services already have:
-```go
-replace github.com/bengobox/shared/auth-client => ../shared/auth-client
+Each service should import the library without `replace` directives:
 
+```go
 require (
-    github.com/bengobox/shared/auth-client v0.1.0
+    github.com/Bengo-Hub/shared-auth-client v0.1.0
 )
 ```
 
-The `replace` directive ensures local development works, while the version (`v0.1.0`) documents which version is being used.
+**Note:** For local development, developers can use `go.work` at the `BengoBox` root to link all cloned repositories together.
 
 ### Step 3: Verify
 
 ```bash
-# In any service directory
+# In any service repository
 go mod tidy
 go build ./cmd/api
 ```
 
-## Future: Extract to Separate Repository
+## Local Development Setup
 
-If you want to extract `shared/auth-client` to its own repository:
+When developing locally, clone all repositories into a parent directory:
 
-1. **Create new repository**: `github.com/Bengo-Hub/shared-auth-client`
-2. **Copy contents**: Move all files from `shared/auth-client/` to the new repo
-3. **Tag**: `git tag v0.1.0 && git push origin v0.1.0`
-4. **Update services**: Remove `replace` directives and use:
-   ```go
-   require (
-       github.com/Bengo-Hub/shared-auth-client v0.1.0
-   )
-   ```
+```bash
+# Create parent directory
+mkdir -p BengoBox
+cd BengoBox/
+
+# Clone all repositories
+git clone https://github.com/Bengo-Hub/cafe-backend.git Cafe/cafe-backend
+git clone https://github.com/Bengo-Hub/notifications-app.git notifications-app
+git clone https://github.com/Bengo-Hub/treasury-app.git treasury-app
+git clone https://github.com/Bengo-Hub/inventory-service.git inventory-service
+git clone https://github.com/Bengo-Hub/pos-service.git pos-service
+git clone https://github.com/Bengo-Hub/logistics-service.git logistics-service
+git clone https://github.com/Bengo-Hub/shared-auth-client.git shared/auth-client
+
+# Create go.work at BengoBox root
+cd BengoBox/
+go work init \
+  ./Cafe/cafe-backend \
+  ./notifications-app \
+  ./treasury-app \
+  ./inventory-service \
+  ./pos-service \
+  ./logistics-service \
+  ./shared/auth-client
+```
+
+This allows local development without needing to fetch from GitHub each time.
+
+## Production Deployment
+
+In production and CI/CD:
+
+1. **No `replace` directives** - services import directly from GitHub
+2. **Tagged versions** - always use specific versions (e.g., `v0.1.0`)
+3. **Private module access** - configure `GOPRIVATE` and git credentials
 
 ## Versioning Strategy
 
@@ -63,3 +89,22 @@ If you want to extract `shared/auth-client` to its own repository:
 
 **v0.1.0** - Initial release with JWKS validation, middleware, and production-ready features.
 
+## Updating Services to Use New Versions
+
+When releasing a new version:
+
+1. **Tag the new version:**
+   ```bash
+   cd shared-auth-client/
+   git tag v0.2.0
+   git push origin v0.2.0
+   ```
+
+2. **Update each service:**
+   ```bash
+   cd cafe-backend/
+   go get github.com/Bengo-Hub/shared-auth-client@v0.2.0
+   go mod tidy
+   ```
+
+3. **Test and deploy** each service independently

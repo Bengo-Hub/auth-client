@@ -2,13 +2,17 @@
 
 ## Overview
 
-The `shared/auth-client` library is used across all BengoBox microservices for JWT validation and authentication. This guide explains how to deploy and consume it in production environments.
+The `shared-auth-client` library is used across all BengoBox microservices for JWT validation and authentication. This library is published as an independent GitHub repository (`github.com/Bengo-Hub/shared-auth-client`) in the Bengo-Hub organization.
+
+## Architecture Context
+
+**Important:** Each BengoBox service (cafe-backend, notifications-app, treasury-app, inventory-service, pos-service, logistics-service) is an **independent GitHub repository** in the `Bengo-Hub` organization. The `BengoBox` folder is just a local root directory where developers clone all repositories for local development - it is **not** a monorepo.
 
 ## Module Structure
 
 ```
-shared/auth-client/
-├── go.mod                    # Module: github.com/bengobox/shared/auth-client
+shared-auth-client/  (Independent GitHub repository)
+├── go.mod                    # Module: github.com/Bengo-Hub/shared-auth-client
 ├── claims.go                 # JWT claims structure
 ├── validator.go              # JWKS-based token validation
 ├── middleware.go             # HTTP middleware (chi)
@@ -20,69 +24,67 @@ shared/auth-client/
 
 ### Option 1: Go Workspace (Local Development) ✅ Recommended for Local
 
-Use `go.work` at the repository root for local development:
+When developing locally, clone all repositories into a parent directory (e.g., `BengoBox/`) and use `go.work`:
 
 ```bash
-# At repository root
-go work init ./auth-service ./Cafe/cafe-backend ./notifications-app ./treasury-app ./shared/auth-client
+# Clone all repositories
+cd BengoBox/
+git clone https://github.com/Bengo-Hub/cafe-backend.git Cafe/cafe-backend
+git clone https://github.com/Bengo-Hub/notifications-app.git notifications-app
+git clone https://github.com/Bengo-Hub/shared-auth-client.git shared/auth-client
+# ... clone other services
+
+# Create go.work at BengoBox root
+cd BengoBox/
+go work init ./Cafe/cafe-backend ./notifications-app ./shared/auth-client
 ```
 
 **Pros:**
 - No code changes needed
 - Works seamlessly with `go build`, `go test`, `go run`
 - All modules see each other automatically
+- Perfect for local development
 
 **Cons:**
-- Only works in monorepo structure
-- Not suitable for separate deployments
+- Only works when all repos are cloned in the same parent directory
+- Not used in production/CI/CD
 
-### Option 2: Monorepo with Replace Directives ✅ Recommended for Monorepo
+### Option 2: Git-Based Import (Production) ✅ Recommended for Production
 
-Since all services are in the same monorepo (BengoBox), use `replace` directives with tagged versions:
+Since all services are in the same GitHub organization (`Bengo-Hub`), use git-based imports with tagged versions:
 
 #### Setup Steps:
 
-1. **Tag the repository** (tags the entire monorepo):
+1. **Tag the library repository:**
    ```bash
-   # At repository root
-   git tag shared-auth-client/v0.1.0
-   git push origin shared-auth-client/v0.1.0
+   cd shared-auth-client/
+   git tag v0.1.0
+   git push origin v0.1.0
    ```
 
-2. **Service go.mod** (keep replace, use tagged version):
+2. **Service go.mod** (no replace directive needed):
    ```go
-   replace github.com/bengobox/shared/auth-client => ../shared/auth-client
-   
    require (
-       github.com/bengobox/shared/auth-client v0.1.0
+       github.com/Bengo-Hub/shared-auth-client v0.1.0
    )
    ```
 
-3. **For local development**, `go.work` handles everything automatically.
+3. **Configure Git credentials** (for private repos in CI/CD):
+   ```bash
+   git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+   ```
 
-4. **For CI/CD**, `replace` directives work seamlessly - no additional configuration needed.
+4. **In CI/CD pipelines**, set:
+   ```bash
+   export GOPRIVATE=github.com/Bengo-Hub/*
+   export GONOPROXY=github.com/Bengo-Hub/*
+   export GONOSUMDB=github.com/Bengo-Hub/*
+   ```
 
-**Note:** If you prefer to extract `shared/auth-client` to its own repository in the future:
-- Create `github.com/Bengo-Hub/shared-auth-client` repository
-- Move `shared/auth-client` contents to the new repo
-- Tag as `v0.1.0`
-- Update all services to remove `replace` and use: `github.com/Bengo-Hub/shared-auth-client v0.1.0`
-
-### Option 3: Git Submodule (Alternative)
-
-If services are in separate repositories:
-
-```bash
-# In each service repo
-git submodule add https://github.com/bengobox/shared-auth-client.git shared/auth-client
-
-# In go.mod
-replace github.com/bengobox/shared/auth-client => ./shared/auth-client
-```
-
-### Option 4: Copy Library (Not Recommended)
-
-Copy the library into each service (maintains duplication, not recommended).
+5. **For local development**, if you don't use `go.work`, you can still use:
+   ```bash
+   go get github.com/Bengo-Hub/shared-auth-client@v0.1.0
+   ```
 
 ## CI/CD Configuration
 
@@ -97,9 +99,9 @@ Copy the library into each service (maintains duplication, not recommended).
 - name: Configure private modules
   run: |
     git config --global url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
-    export GOPRIVATE=github.com/bengobox/*
-    export GONOPROXY=github.com/bengobox/*
-    export GONOSUMDB=github.com/bengobox/*
+    export GOPRIVATE=github.com/Bengo-Hub/*
+    export GONOPROXY=github.com/Bengo-Hub/*
+    export GONOSUMDB=github.com/Bengo-Hub/*
 
 - name: Build
   run: go build ./cmd/api
@@ -113,6 +115,9 @@ FROM golang:1.24-alpine AS builder
 # Configure private modules
 ARG GITHUB_TOKEN
 RUN git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+ENV GOPRIVATE=github.com/Bengo-Hub/*
+ENV GONOPROXY=github.com/Bengo-Hub/*
+ENV GONOSUMDB=github.com/Bengo-Hub/*
 
 WORKDIR /app
 COPY go.mod go.sum ./
@@ -141,10 +146,10 @@ Example:
 
 ## Service Integration Checklist
 
-Each service integrating `shared/auth-client` should:
+Each service integrating `shared-auth-client` should:
 
-- [ ] Remove local `replace` directive (for production)
-- [ ] Add proper version constraint in `go.mod`
+- [ ] Add proper version constraint in `go.mod`: `github.com/Bengo-Hub/shared-auth-client v0.1.0`
+- [ ] Remove any `replace` directives (for production)
 - [ ] Configure CI/CD for private module access
 - [ ] Test authentication flow end-to-end
 - [ ] Document auth-service URL and JWKS endpoint
@@ -179,7 +184,7 @@ Monitor these metrics:
 ## Troubleshooting
 
 ### Issue: `cannot find module providing package`
-**Solution**: Ensure `GOPRIVATE` is set and git credentials are configured.
+**Solution**: Ensure `GOPRIVATE` is set and git credentials are configured. Verify the repository exists at `github.com/Bengo-Hub/shared-auth-client`.
 
 ### Issue: `401 Unauthorized` when fetching JWKS
 **Solution**: Verify auth-service is accessible and JWKS endpoint is public.
@@ -194,9 +199,9 @@ Monitor these metrics:
 
 ### From Local Replace to Production Module
 
-1. **Tag current version:**
+1. **Tag the library:**
    ```bash
-   cd shared/auth-client
+   cd shared-auth-client
    git tag v0.1.0
    git push origin v0.1.0
    ```
@@ -205,12 +210,12 @@ Monitor these metrics:
    ```bash
    # Remove replace directive
    # Update require to use version
-   go mod edit -require=github.com/bengobox/shared/auth-client@v0.1.0
-   go mod edit -dropreplace=github.com/bengobox/shared/auth-client
+   go mod edit -require=github.com/Bengo-Hub/shared-auth-client@v0.1.0
+   go mod edit -dropreplace=github.com/Bengo-Hub/shared-auth-client
    go mod tidy
    ```
 
-3. **Test locally** (use go.work for development)
+3. **Test locally** (use go.work for development if needed)
 
 4. **Deploy** with CI/CD configured for private modules
 
@@ -222,4 +227,3 @@ Monitor these metrics:
 4. **Monitor JWKS** fetch failures and cache performance
 5. **Document breaking changes** in CHANGELOG.md
 6. **Keep backward compatibility** within MAJOR versions
-

@@ -101,6 +101,34 @@ if !ok {
 router.Use(authclient.GinRequireScope("read:orders", "write:orders"))
 ```
 
+### API Key Authentication (Fallback)
+
+Services can optionally enable API key authentication as a fallback when JWT tokens are not provided:
+
+```go
+import (
+    authclient "github.com/Bengo-Hub/shared-auth-client"
+)
+
+// Initialize JWT validator
+validator, _ := authclient.NewValidator(config)
+
+// Initialize API key validator (optional)
+apiKeyValidator := authclient.NewAPIKeyValidator("https://auth.codevertex.local:4101", nil)
+
+// Create middleware with API key fallback
+authMiddleware := authclient.NewAuthMiddlewareWithAPIKey(validator, apiKeyValidator)
+
+// Apply middleware (will accept both JWT Bearer tokens and X-API-Key headers)
+router.Use(authclient.GinMiddleware(authMiddleware))
+```
+
+**API Key Format:**
+- API keys are generated via `POST /api/v1/admin/api-keys` in auth-service
+- Clients send API keys in the `X-API-Key` header
+- API keys are validated against auth-service and cached for 5 minutes
+- API keys return synthetic claims with `tenant_id` and `scopes` from the key configuration
+
 ## Features
 
 - ✅ JWKS fetching and caching with automatic refresh

@@ -11,34 +11,62 @@ type contextKey string
 
 const claimsContextKey contextKey = "auth_claims"
 
-// AuthMiddleware provides JWT-backed authentication middleware.
+// AuthMiddleware provides JWT-backed authentication middleware with API key fallback.
 type AuthMiddleware struct {
-	validator *Validator
+	validator       *Validator
+	apiKeyValidator *APIKeyValidator
 }
 
-// NewAuthMiddleware creates a new instance.
+// NewAuthMiddleware creates a new instance with JWT validator only.
 func NewAuthMiddleware(validator *Validator) *AuthMiddleware {
 	return &AuthMiddleware{validator: validator}
 }
 
-// RequireAuth ensures incoming requests possess a valid bearer token.
+// NewAuthMiddlewareWithAPIKey creates a new instance with both JWT validator and API key validator.
+func NewAuthMiddlewareWithAPIKey(validator *Validator, apiKeyValidator *APIKeyValidator) *AuthMiddleware {
+	return &AuthMiddleware{
+		validator:       validator,
+		apiKeyValidator: apiKeyValidator,
+	}
+}
+
+// RequireAuth ensures incoming requests possess a valid bearer token or API key.
 func (a *AuthMiddleware) RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" || !strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
-			writeAuthError(w, http.StatusUnauthorized, "missing bearer token")
-			return
+
+		// Try JWT Bearer token first
+		if authHeader != "" && strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+			tokenStr := strings.TrimSpace(authHeader[7:])
+			claims, err := a.validator.ValidateToken(tokenStr)
+			if err == nil {
+				ctx := context.WithValue(r.Context(), claimsContextKey, claims)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
 		}
 
-		tokenStr := strings.TrimSpace(authHeader[7:])
-		claims, err := a.validator.ValidateToken(tokenStr)
-		if err != nil {
-			writeAuthError(w, http.StatusUnauthorized, "invalid token")
-			return
+		// Fallback to API key if JWT validation failed or no Bearer token
+		if a.apiKeyValidator != nil {
+			apiKey := r.Header.Get("X-API-Key")
+			if apiKey != "" {
+				clientID, tenantID, scopes, _, err := a.apiKeyValidator.ValidateAPIKey(r.Context(), apiKey)
+				if err == nil {
+					// Create synthetic claims from API key
+					claims := &Claims{
+						TenantID: tenantID,
+						Scope:    scopes,
+					}
+					// Store client_id in Subject for API keys
+					claims.Subject = clientID
+					ctx := context.WithValue(r.Context(), claimsContextKey, claims)
+					next.ServeHTTP(w, r.WithContext(ctx))
+					return
+				}
+			}
 		}
 
-		ctx := context.WithValue(r.Context(), claimsContextKey, claims)
-		next.ServeHTTP(w, r.WithContext(ctx))
+		writeAuthError(w, http.StatusUnauthorized, "missing bearer token or API key")
 	})
 }
 
@@ -120,4 +148,3 @@ func writeAuthError(w http.ResponseWriter, status int, message string) {
 		"code":  "unauthorized",
 	})
 }
-

@@ -164,7 +164,7 @@ Each service needs these environment variables:
 # Auth Service Configuration
 AUTH_SERVICE_URL=https://sso.codevertexitsolutions.com
 AUTH_ISSUER=https://sso.codevertexitsolutions.com
-AUTH_AUDIENCE=bengobox
+AUTH_AUDIENCE=codevertex
 AUTH_JWKS_URL=https://sso.codevertexitsolutions.com/api/v1/.well-known/jwks.json
 
 # Optional: Cache configuration

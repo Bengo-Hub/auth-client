@@ -47,7 +47,7 @@ import (
 config := authclient.DefaultConfig(
     "https://sso.codevertexitsolutions.com/api/v1/.well-known/jwks.json",
     "https://sso.codevertexitsolutions.com",
-    "bengobox",
+    "codevertex",
 )
 validator, err := authclient.NewValidator(config)
 if err != nil {
@@ -145,7 +145,7 @@ router.Use(authclient.GinMiddleware(authMiddleware))
 config := authclient.Config{
     JWKSUrl:         "https://sso.codevertexitsolutions.com/api/v1/.well-known/jwks.json",
     Issuer:          "https://sso.codevertexitsolutions.com",
-    Audience:        "bengobox",
+    Audience:        "codevertex",
     CacheTTL:        1 * time.Hour,        // How long to cache JWKS
     RefreshInterval: 5 * time.Minute,      // Background refresh interval
     HTTPClient:      &http.Client{Timeout: 10 * time.Second},

@@ -138,6 +138,7 @@ router.Use(authclient.GinMiddleware(authMiddleware))
 - ✅ HTTP middleware for chi and gin routers
 - ✅ Production-ready with error handling and observability hooks
 - ✅ Thread-safe key caching with singleflight deduplication
+- ✅ `SyncUser` method for syncing identities across services
 
 ## Configuration
 

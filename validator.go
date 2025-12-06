@@ -3,7 +3,9 @@ package authclient
 import (
 	"context"
 	"crypto/rsa"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math/big"
@@ -12,17 +14,20 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/singleflight"
 )
 
 // Config holds validator configuration.
 type Config struct {
-	JWKSUrl          string
-	Issuer           string
-	Audience         string
-	CacheTTL         time.Duration // How long to cache JWKS
-	RefreshInterval  time.Duration // How often to refresh JWKS in background
-	HTTPClient       *http.Client
+	JWKSUrl         string
+	Issuer          string
+	Audience        string
+	CacheTTL        time.Duration // How long to cache JWKS
+	RefreshInterval time.Duration // How often to refresh JWKS in background
+	HTTPClient      *http.Client
+	RedisClient     *redis.Client // Optional: Redis client for session caching
+	SessionCacheTTL time.Duration // Duration to cache validated sessions
 }
 
 // DefaultConfig returns a config with sensible defaults.
@@ -34,6 +39,7 @@ func DefaultConfig(jwksURL, issuer, audience string) Config {
 		CacheTTL:        1 * time.Hour,
 		RefreshInterval: 5 * time.Minute,
 		HTTPClient:      &http.Client{Timeout: 10 * time.Second},
+		SessionCacheTTL: 5 * time.Minute,
 	}
 }
 
@@ -70,6 +76,15 @@ func NewValidator(config Config) (*Validator, error) {
 
 // ValidateToken validates a JWT token string and returns claims.
 func (v *Validator) ValidateToken(tokenString string) (*Claims, error) {
+	// 1. Check Redis cache if configured
+	if v.config.RedisClient != nil {
+		claims, err := v.getCachedClaims(tokenString)
+		if err == nil && claims != nil {
+			return claims, nil
+		}
+	}
+
+	// 2. Parse and validate token (CPU bound)
 	token, err := v.parser.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 		kid, ok := token.Header["kid"].(string)
 		if !ok {
@@ -123,7 +138,47 @@ func (v *Validator) ValidateToken(tokenString string) (*Claims, error) {
 		}
 	}
 
+	// 3. Cache the validated claims if Redis is configured
+	if v.config.RedisClient != nil {
+		_ = v.cacheClaims(tokenString, claims)
+	}
+
 	return claims, nil
+}
+
+func (v *Validator) getCachedClaims(tokenString string) (*Claims, error) {
+	tokenHash := sha256.Sum256([]byte(tokenString))
+	key := fmt.Sprintf("session:%s", hex.EncodeToString(tokenHash[:]))
+
+	data, err := v.config.RedisClient.Get(context.Background(), key).Bytes()
+	if err != nil {
+		return nil, err
+	}
+
+	var claims Claims
+	if err := json.Unmarshal(data, &claims); err != nil {
+		return nil, err
+	}
+
+	return &claims, nil
+}
+
+func (v *Validator) cacheClaims(tokenString string, claims *Claims) error {
+	tokenHash := sha256.Sum256([]byte(tokenString))
+	key := fmt.Sprintf("session:%s", hex.EncodeToString(tokenHash[:]))
+
+	data, err := json.Marshal(claims)
+	if err != nil {
+		return err
+	}
+
+	// Use Configured TTL or default
+	ttl := v.config.SessionCacheTTL
+	if ttl == 0 {
+		ttl = 5 * time.Minute
+	}
+
+	return v.config.RedisClient.Set(context.Background(), key, data, ttl).Err()
 }
 
 func (v *Validator) getKey(kid string) *rsa.PublicKey {
@@ -225,4 +280,3 @@ func (v *Validator) refreshLoop() {
 func (v *Validator) Stop() {
 	close(v.stopRefresh)
 }
-

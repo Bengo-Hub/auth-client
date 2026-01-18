@@ -50,15 +50,12 @@ func (a *AuthMiddleware) RequireAuth(next http.Handler) http.Handler {
 		if a.apiKeyValidator != nil {
 			apiKey := r.Header.Get("X-API-Key")
 			if apiKey != "" {
-				clientID, tenantID, scopes, _, err := a.apiKeyValidator.ValidateAPIKey(r.Context(), apiKey)
+				result, err := a.apiKeyValidator.ValidateAPIKeyFull(r.Context(), apiKey)
 				if err == nil {
-					// Create synthetic claims from API key
-					claims := &Claims{
-						TenantID: tenantID,
-						Scope:    scopes,
-					}
+					// Convert API key result to Claims for consistent handling
+					claims := result.ToClaims()
 					// Store client_id in Subject for API keys
-					claims.Subject = clientID
+					claims.Subject = result.ClientID
 					ctx := context.WithValue(r.Context(), claimsContextKey, claims)
 					next.ServeHTTP(w, r.WithContext(ctx))
 					return
@@ -146,5 +143,177 @@ func writeAuthError(w http.ResponseWriter, status int, message string) {
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"error": message,
 		"code":  "unauthorized",
+	})
+}
+
+// ============================================================================
+// Role-Based Access Control Middleware
+// ============================================================================
+
+// RequireRole creates middleware that requires at least one of the specified roles.
+// Superuser role always bypasses this check.
+func RequireRole(roles ...string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims, ok := ClaimsFromContext(r.Context())
+			if !ok {
+				writeAuthError(w, http.StatusUnauthorized, "missing claims")
+				return
+			}
+
+			// Superuser bypasses all role checks
+			if claims.IsSuperuser() {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			if !claims.HasAnyRole(roles...) {
+				writeAuthError(w, http.StatusForbidden, "insufficient role")
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequireAdmin creates middleware that requires admin or superuser role.
+func RequireAdmin() func(http.Handler) http.Handler {
+	return RequireRole("admin", "superuser")
+}
+
+// ============================================================================
+// Subscription Feature Gating Middleware
+// ============================================================================
+
+// RequireFeature creates middleware that requires a specific subscription feature.
+// Returns 403 Forbidden with upgrade message if feature is not enabled.
+func RequireFeature(feature string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims, ok := ClaimsFromContext(r.Context())
+			if !ok {
+				writeAuthError(w, http.StatusUnauthorized, "missing claims")
+				return
+			}
+
+			// Superuser bypasses feature checks
+			if claims.IsSuperuser() {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Check subscription is active
+			if !claims.IsSubscriptionActive() {
+				writeFeatureError(w, http.StatusForbidden, "subscription_inactive", "Your subscription is not active")
+				return
+			}
+
+			if !claims.HasFeature(feature) {
+				writeFeatureError(w, http.StatusForbidden, "feature_not_available",
+					"This feature requires an upgrade. Feature: "+feature)
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequireAnyFeature creates middleware that requires at least one of the specified features.
+func RequireAnyFeature(features ...string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims, ok := ClaimsFromContext(r.Context())
+			if !ok {
+				writeAuthError(w, http.StatusUnauthorized, "missing claims")
+				return
+			}
+
+			if claims.IsSuperuser() {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			if !claims.IsSubscriptionActive() {
+				writeFeatureError(w, http.StatusForbidden, "subscription_inactive", "Your subscription is not active")
+				return
+			}
+
+			if !claims.HasAnyFeature(features...) {
+				writeFeatureError(w, http.StatusForbidden, "feature_not_available",
+					"This feature requires an upgrade")
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequirePlan creates middleware that requires at least the specified subscription plan.
+func RequirePlan(plan string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims, ok := ClaimsFromContext(r.Context())
+			if !ok {
+				writeAuthError(w, http.StatusUnauthorized, "missing claims")
+				return
+			}
+
+			if claims.IsSuperuser() {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			if !claims.IsSubscriptionActive() {
+				writeFeatureError(w, http.StatusForbidden, "subscription_inactive", "Your subscription is not active")
+				return
+			}
+
+			if !claims.IsAtLeastPlan(plan) {
+				writeFeatureError(w, http.StatusForbidden, "plan_upgrade_required",
+					"This feature requires "+plan+" plan or higher")
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequireActiveSubscription creates middleware that requires an active subscription.
+func RequireActiveSubscription() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims, ok := ClaimsFromContext(r.Context())
+			if !ok {
+				writeAuthError(w, http.StatusUnauthorized, "missing claims")
+				return
+			}
+
+			if claims.IsSuperuser() {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			if !claims.IsSubscriptionActive() {
+				writeFeatureError(w, http.StatusForbidden, "subscription_inactive",
+					"Your subscription is not active. Please renew to continue.")
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func writeFeatureError(w http.ResponseWriter, status int, code, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"error":   message,
+		"code":    code,
+		"upgrade": true,
 	})
 }

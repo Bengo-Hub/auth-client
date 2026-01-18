@@ -66,8 +66,12 @@ Once the repository is created and tagged, update each service:
    cd BengoBox/
    
    git clone https://github.com/Bengo-Hub/shared-auth-client.git shared/auth-client
-   git clone https://github.com/Bengo-Hub/cafe-backend.git Cafe/cafe-backend
-   # ... clone other services
+   git clone https://github.com/Bengo-Hub/ordering-backend.git ordering-service/ordering-backend
+   git clone https://github.com/Bengo-Hub/notifications-api.git notifications-service/notifications-api
+   git clone https://github.com/Bengo-Hub/treasury-api.git finance-service/treasury-api
+   git clone https://github.com/Bengo-Hub/inventory-api.git inventory-service/inventory-api
+   git clone https://github.com/Bengo-Hub/pos-api.git pos-service/pos-api
+   git clone https://github.com/Bengo-Hub/logistics-api.git logistics-service/logistics-api
    ```
 
 2. Create `go.work` at BengoBox root:
@@ -75,12 +79,12 @@ Once the repository is created and tagged, update each service:
    cd BengoBox/
    go work init \
      ./shared/auth-client \
-     ./Cafe/cafe-backend \
-     ./notifications-app \
-     ./treasury-app \
-     ./inventory-service \
-     ./pos-service \
-     ./logistics-service
+     ./ordering-service/ordering-backend \
+     ./notifications-service/notifications-api \
+     .finance-service/treasury-api \
+     ./inventory-service/inventory-api \
+     ./pos-service/pos-api \
+     ./logistics-service/logistics-api
    ```
 
 3. **Keep replace directives** in service `go.mod` files for local development

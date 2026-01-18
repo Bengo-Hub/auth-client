@@ -24,12 +24,13 @@ When developing locally, clone all repositories into a parent directory (e.g., `
 # Clone repositories
 cd BengoBox/
 git clone https://github.com/Bengo-Hub/shared-auth-client.git shared/auth-client
-git clone https://github.com/Bengo-Hub/cafe-backend.git Cafe/cafe-backend
+git clone https://github.com/Bengo-Hub/ordering-backend.git ordering-service/ordering-backend
+git clone https://github.com/Bengo-Hub/notifications-api.git notifications-service/notifications-api
 # ... clone other services
 
 # Create go.work at BengoBox root
 cd BengoBox/
-go work init ./shared/auth-client ./Cafe/cafe-backend ./notifications-app
+go work init ./shared/auth-client ./ordering-service/ordering-backend ./notifications-service/notifications-api
 ```
 
 See [DEPLOYMENT.md](./DEPLOYMENT.md) for detailed deployment strategies and CI/CD configuration.

@@ -2,7 +2,7 @@
 
 ## Repository Structure
 
-**Important:** `shared-auth-client` is an **independent GitHub repository** (`github.com/Bengo-Hub/shared-auth-client`) in the Bengo-Hub organization. Each BengoBox service (cafe-backend, notifications-app, etc.) is also an independent repository. The `BengoBox` folder is just a local root directory where developers clone repositories - it is **not** a monorepo.
+**Important:** `shared-auth-client` is an **independent GitHub repository** (`github.com/Bengo-Hub/shared-auth-client`) in the Bengo-Hub organization. Each BengoBox service (ordering-backend, notifications-api, etc.) is also an independent repository. The `BengoBox` folder is just a local root directory where developers clone repositories - it is **not** a monorepo.
 
 ## Tagging the Library
 
@@ -47,22 +47,22 @@ mkdir -p BengoBox
 cd BengoBox/
 
 # Clone all repositories
-git clone https://github.com/Bengo-Hub/cafe-backend.git Cafe/cafe-backend
-git clone https://github.com/Bengo-Hub/notifications-app.git notifications-app
-git clone https://github.com/Bengo-Hub/treasury-app.git treasury-app
-git clone https://github.com/Bengo-Hub/inventory-service.git inventory-service
-git clone https://github.com/Bengo-Hub/pos-service.git pos-service
-git clone https://github.com/Bengo-Hub/logistics-service.git logistics-service
+git clone https://github.com/Bengo-Hub/ordering-backend.git ordering-service/ordering-backend
+git clone https://github.com/Bengo-Hub/notifications-api.git notifications-service/notifications-api
+git clone https://github.com/Bengo-Hub/treasury-api.git finance-service/treasury-api
+git clone https://github.com/Bengo-Hub/inventory-api.git inventory-service/inventory-api
+git clone https://github.com/Bengo-Hub/pos-api.git pos-service/pos-api
+git clone https://github.com/Bengo-Hub/logistics-api.git logistics-service/logistics-api
 git clone https://github.com/Bengo-Hub/shared-auth-client.git shared/auth-client
 
 # Create go.work at BengoBox root
 cd BengoBox/
 go work init \
-  ./Cafe/cafe-backend \
-  ./notifications-app \
-  ./treasury-app \
-  ./inventory-service \
-  ./pos-service \
+  ./ordering-service/ordering-backend \
+  ./notifications-service/notifications-api \
+  ./finance-service/treasury-api \
+  ./inventory-service/inventory-api \
+  ./pos-service/pos-api \
   ./logistics-service \
   ./shared/auth-client
 ```

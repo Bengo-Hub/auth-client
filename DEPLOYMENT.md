@@ -6,7 +6,7 @@ The `shared-auth-client` library is used across all BengoBox microservices for J
 
 ## Architecture Context
 
-**Important:** Each BengoBox service (cafe-backend, notifications-app, treasury-app, inventory-service, pos-service, logistics-service) is an **independent GitHub repository** in the `Bengo-Hub` organization. The `BengoBox` folder is just a local root directory where developers clone all repositories for local development - it is **not** a monorepo.
+**Important:** Each BengoBox service (ordering-backend, notifications-api, treasury-api, inventory-api, pos-api, logistics-api) is an **independent GitHub repository** in the `Bengo-Hub` organization. The `BengoBox` folder is just a local root directory where developers clone all repositories for local development - it is **not** a monorepo.
 
 ## Module Structure
 
@@ -29,14 +29,14 @@ When developing locally, clone all repositories into a parent directory (e.g., `
 ```bash
 # Clone all repositories
 cd BengoBox/
-git clone https://github.com/Bengo-Hub/cafe-backend.git Cafe/cafe-backend
-git clone https://github.com/Bengo-Hub/notifications-app.git notifications-app
+git clone https://github.com/Bengo-Hub/ordering-backend.git ordering-service/ordering-backend
+git clone https://github.com/Bengo-Hub/notifications-api.git notifications-service/notifications-api
 git clone https://github.com/Bengo-Hub/shared-auth-client.git shared/auth-client
 # ... clone other services
 
 # Create go.work at BengoBox root
 cd BengoBox/
-go work init ./Cafe/cafe-backend ./notifications-app ./shared/auth-client
+go work init ./ordering-service/ordering-backend ./notifications-service/notifications-api ./shared/auth-client
 ```
 
 **Pros:**

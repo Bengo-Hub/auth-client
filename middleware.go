@@ -97,6 +97,12 @@ func ClaimsFromContext(ctx context.Context) (*Claims, bool) {
 	return claims, ok && claims != nil
 }
 
+// ContextWithClaims returns a new context with the given claims attached.
+// This is primarily useful for testing where you need to inject mock claims.
+func ContextWithClaims(ctx context.Context, claims *Claims) context.Context {
+	return context.WithValue(ctx, claimsContextKey, claims)
+}
+
 // RequireScope creates middleware that requires specific scopes.
 func RequireScope(scopes ...string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {

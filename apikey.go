@@ -21,6 +21,7 @@ type APIKeyValidator struct {
 type apiKeyInfo struct {
 	clientID             string
 	tenantID             string
+	tenantSlug           string
 	scopes               []string
 	roles                []string
 	service              string
@@ -35,6 +36,7 @@ type apiKeyInfo struct {
 type APIKeyValidationResult struct {
 	ClientID             string         `json:"client_id"`
 	TenantID             string         `json:"tenant_id"`
+	TenantSlug           string         `json:"tenant_slug"`
 	Scopes               []string       `json:"scopes"`
 	Roles                []string       `json:"roles"`
 	Service              string         `json:"service"`
@@ -76,6 +78,7 @@ func (v *APIKeyValidator) ValidateAPIKeyFull(ctx context.Context, apiKey string)
 			return &APIKeyValidationResult{
 				ClientID:             info.clientID,
 				TenantID:             info.tenantID,
+				TenantSlug:           info.tenantSlug,
 				Scopes:               info.scopes,
 				Roles:                info.roles,
 				Service:              info.service,
@@ -115,6 +118,7 @@ func (v *APIKeyValidator) ValidateAPIKeyFull(ctx context.Context, apiKey string)
 	v.cache[apiKey] = &apiKeyInfo{
 		clientID:             result.ClientID,
 		tenantID:             result.TenantID,
+		tenantSlug:           result.TenantSlug,
 		scopes:               result.Scopes,
 		roles:                result.Roles,
 		service:              result.Service,
@@ -132,6 +136,7 @@ func (v *APIKeyValidator) ValidateAPIKeyFull(ctx context.Context, apiKey string)
 func (r *APIKeyValidationResult) ToClaims() *Claims {
 	return &Claims{
 		TenantID:             r.TenantID,
+		TenantSlug:           r.TenantSlug,
 		Scope:                r.Scopes,
 		Roles:                r.Roles,
 		ServiceName:          r.Service,

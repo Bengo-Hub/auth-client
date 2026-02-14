@@ -12,10 +12,11 @@ import (
 // Includes subscription data for feature gating without per-request lookups.
 type Claims struct {
 	// Core identity
-	SessionID string   `json:"sid"`
-	TenantID  string   `json:"tenant_id,omitempty"`
-	Scope     []string `json:"scope,omitempty"`
-	Email     string   `json:"email,omitempty"`
+	SessionID  string   `json:"sid"`
+	TenantID   string   `json:"tenant_id,omitempty"`
+	TenantSlug string   `json:"tenant_slug,omitempty"`
+	Scope      []string `json:"scope,omitempty"`
+	Email      string   `json:"email,omitempty"`
 
 	// RBAC - Global roles from auth-service
 	Roles []string `json:"roles,omitempty"`
@@ -62,6 +63,11 @@ func (c *Claims) TenantUUID() (*uuid.UUID, error) {
 		return nil, err
 	}
 	return &id, nil
+}
+
+// GetTenantSlug returns the tenant slug from claims, or empty string if not present.
+func (c *Claims) GetTenantSlug() string {
+	return c.TenantSlug
 }
 
 // HasScope checks if the token has a specific scope.

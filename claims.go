@@ -17,6 +17,7 @@ type Claims struct {
 	TenantSlug string   `json:"tenant_slug,omitempty"`
 	Scope      []string `json:"scope,omitempty"`
 	Email      string   `json:"email,omitempty"`
+	IsPlatformOwner bool `json:"is_platform_owner,omitempty"`
 
 	// RBAC - Global roles from auth-service
 	Roles []string `json:"roles,omitempty"`

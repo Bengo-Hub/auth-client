@@ -31,7 +31,8 @@ type Claims struct {
 
 	// Service account identification (for API Key auth)
 	ServiceName string `json:"service_name,omitempty"` // e.g., "ordering-service", "logistics-service"
-	IsService   bool   `json:"is_service,omitempty"`   // true if this is a service account, not a user
+	Permissions []string `json:"permissions,omitempty"` // Canonical permission codes
+	IsService   bool     `json:"is_service,omitempty"`  // true if this is a service account, not a user
 
 	jwt.RegisteredClaims
 }

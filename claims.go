@@ -103,6 +103,40 @@ func (c *Claims) HasAllScopes(scopes ...string) bool {
 }
 
 // ============================================================================
+// Permission Helpers
+// ============================================================================
+
+// HasPermission checks if the token has a specific permission code.
+func (c *Claims) HasPermission(permission string) bool {
+	for _, p := range c.Permissions {
+		if p == permission {
+			return true
+		}
+	}
+	return false
+}
+
+// HasAnyPermission checks if the token has any of the provided permission codes.
+func (c *Claims) HasAnyPermission(permissions ...string) bool {
+	for _, required := range permissions {
+		if c.HasPermission(required) {
+			return true
+		}
+	}
+	return false
+}
+
+// HasAllPermissions checks if the token has all of the provided permission codes.
+func (c *Claims) HasAllPermissions(permissions ...string) bool {
+	for _, required := range permissions {
+		if !c.HasPermission(required) {
+			return false
+		}
+	}
+	return true
+}
+
+// ============================================================================
 // RBAC Role Helpers
 // ============================================================================
 

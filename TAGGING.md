@@ -102,7 +102,7 @@ When releasing a new version:
 
 2. **Update each service:**
    ```bash
-   cd cafe-backend/
+   cd ordering-backend/
    go get github.com/Bengo-Hub/shared-auth-client@v0.2.0
    go mod tidy
    ```

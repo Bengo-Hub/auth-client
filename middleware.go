@@ -189,6 +189,125 @@ func RequireAdmin() func(http.Handler) http.Handler {
 }
 
 // ============================================================================
+// Permission-Based Access Control Middleware
+// ============================================================================
+
+// RequirePermission creates middleware that requires a specific permission code.
+// Superuser and platform owner roles always bypass this check.
+func RequirePermission(permission string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims, ok := ClaimsFromContext(r.Context())
+			if !ok {
+				writeAuthError(w, http.StatusUnauthorized, "missing claims")
+				return
+			}
+
+			// Superuser bypasses all permission checks
+			if claims.IsSuperuser() {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			if !claims.HasPermission(permission) {
+				writePermissionError(w, http.StatusForbidden, permission)
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequireAnyPermission creates middleware that requires at least one of the specified permissions.
+// Superuser role always bypasses this check.
+func RequireAnyPermission(permissions ...string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims, ok := ClaimsFromContext(r.Context())
+			if !ok {
+				writeAuthError(w, http.StatusUnauthorized, "missing claims")
+				return
+			}
+
+			if claims.IsSuperuser() {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			if !claims.HasAnyPermission(permissions...) {
+				writePermissionError(w, http.StatusForbidden, strings.Join(permissions, " | "))
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequireAllPermissions creates middleware that requires all of the specified permissions.
+// Superuser role always bypasses this check.
+func RequireAllPermissions(permissions ...string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims, ok := ClaimsFromContext(r.Context())
+			if !ok {
+				writeAuthError(w, http.StatusUnauthorized, "missing claims")
+				return
+			}
+
+			if claims.IsSuperuser() {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			if !claims.HasAllPermissions(permissions...) {
+				writePermissionError(w, http.StatusForbidden, strings.Join(permissions, " & "))
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequirePlatformOwner creates middleware that requires the user to be a platform owner.
+// Superuser role always bypasses this check.
+func RequirePlatformOwner() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims, ok := ClaimsFromContext(r.Context())
+			if !ok {
+				writeAuthError(w, http.StatusUnauthorized, "missing claims")
+				return
+			}
+
+			if claims.IsSuperuser() {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			if !claims.IsPlatformOwner {
+				writeAuthError(w, http.StatusForbidden, "platform owner access required")
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func writePermissionError(w http.ResponseWriter, status int, required string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"error":    "insufficient permissions",
+		"code":     "permission_denied",
+		"required": required,
+	})
+}
+
+// ============================================================================
 // Subscription Feature Gating Middleware
 // ============================================================================
 

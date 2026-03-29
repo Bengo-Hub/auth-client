@@ -433,6 +433,37 @@ func RequireActiveSubscription() func(http.Handler) http.Handler {
 	}
 }
 
+// RequireActiveSubscriptionForMutations creates middleware that enforces active subscription
+// only on mutation requests (POST, PUT, PATCH, DELETE). Read-only requests (GET, HEAD, OPTIONS)
+// pass through unconditionally so users can still view data with an expired subscription.
+// Superusers and platform owners always bypass.
+func RequireActiveSubscriptionForMutations() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Read-only methods always pass through
+			if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			claims, ok := ClaimsFromContext(r.Context())
+			if !ok {
+				// No claims = unauthenticated route or middleware ordering issue; let auth middleware handle it
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			if claims.IsSuperuser() || claims.IsPlatformOwner || claims.IsSubscriptionActive() {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			writeFeatureError(w, http.StatusForbidden, "subscription_inactive",
+				"Your subscription is not active. Please renew to continue.")
+		})
+	}
+}
+
 func writeFeatureError(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

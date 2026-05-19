@@ -203,8 +203,8 @@ func RequirePermission(permission string) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Superuser bypasses all permission checks
-			if claims.IsSuperuser() {
+			// Superuser and platform owner bypass all permission checks
+			if claims.IsSuperuser() || claims.IsPlatformOwner {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -220,7 +220,7 @@ func RequirePermission(permission string) func(http.Handler) http.Handler {
 }
 
 // RequireAnyPermission creates middleware that requires at least one of the specified permissions.
-// Superuser role always bypasses this check.
+// Superuser and platform owner roles always bypass this check.
 func RequireAnyPermission(permissions ...string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -230,7 +230,8 @@ func RequireAnyPermission(permissions ...string) func(http.Handler) http.Handler
 				return
 			}
 
-			if claims.IsSuperuser() {
+			// Superuser and platform owner bypass all permission checks
+			if claims.IsSuperuser() || claims.IsPlatformOwner {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -246,7 +247,7 @@ func RequireAnyPermission(permissions ...string) func(http.Handler) http.Handler
 }
 
 // RequireAllPermissions creates middleware that requires all of the specified permissions.
-// Superuser role always bypasses this check.
+// Superuser and platform owner roles always bypass this check.
 func RequireAllPermissions(permissions ...string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -256,7 +257,8 @@ func RequireAllPermissions(permissions ...string) func(http.Handler) http.Handle
 				return
 			}
 
-			if claims.IsSuperuser() {
+			// Superuser and platform owner bypass all permission checks
+			if claims.IsSuperuser() || claims.IsPlatformOwner {
 				next.ServeHTTP(w, r)
 				return
 			}

@@ -19,6 +19,13 @@ type Claims struct {
 	Email      string   `json:"email,omitempty"`
 	IsPlatformOwner bool `json:"is_platform_owner,omitempty"`
 
+	// Outlet / branch context — set when a single outlet is selected at login or via select-outlet.
+	// Empty for HQ/admin users who can see all outlets and use X-Outlet-ID header instead.
+	OutletID      string `json:"outlet_id,omitempty"`
+	OutletCode    string `json:"outlet_code,omitempty"`
+	OutletUseCase string `json:"outlet_use_case,omitempty"`
+	IsHQUser      bool   `json:"is_hq_user,omitempty"`
+
 	// RBAC - Global roles from auth-service
 	Roles []string `json:"roles,omitempty"`
 
@@ -70,6 +77,18 @@ func (c *Claims) TenantUUID() (*uuid.UUID, error) {
 // GetTenantSlug returns the tenant slug from claims, or empty string if not present.
 func (c *Claims) GetTenantSlug() string {
 	return c.TenantSlug
+}
+
+// GetOutletID returns the outlet ID from claims, or empty string if not set.
+// HQ/admin users may have an empty OutletID; they use X-Outlet-ID header for drill-down.
+func (c *Claims) GetOutletID() string {
+	return c.OutletID
+}
+
+// CanAccessAllOutlets returns true when the user is not scoped to a single outlet.
+// Platform owners, tenant admins, and is_hq_user users can access data across all outlets.
+func (c *Claims) CanAccessAllOutlets() bool {
+	return c.IsPlatformOwner || c.IsAdmin() || c.IsHQUser
 }
 
 // HasScope checks if the token has a specific scope.

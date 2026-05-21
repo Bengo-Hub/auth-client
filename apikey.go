@@ -134,6 +134,13 @@ func (v *APIKeyValidator) ValidateAPIKeyFull(ctx context.Context, apiKey string)
 
 // ToClaims converts an API key validation result to Claims for consistent handling.
 func (r *APIKeyValidationResult) ToClaims() *Claims {
+	isPlatformOwner := false
+	for _, role := range r.Roles {
+		if role == "superuser" {
+			isPlatformOwner = true
+			break
+		}
+	}
 	return &Claims{
 		TenantID:             r.TenantID,
 		TenantSlug:           r.TenantSlug,
@@ -141,6 +148,7 @@ func (r *APIKeyValidationResult) ToClaims() *Claims {
 		Roles:                r.Roles,
 		ServiceName:          r.Service,
 		IsService:            r.Service != "",
+		IsPlatformOwner:      isPlatformOwner,
 		SubscriptionPlan:     r.SubscriptionPlan,
 		SubscriptionFeatures: r.SubscriptionFeatures,
 		SubscriptionLimits:   r.SubscriptionLimits,

@@ -7,6 +7,15 @@ import (
 	"github.com/google/uuid"
 )
 
+// ExpiresAt converts the Unix timestamp subscription expiry to *time.Time.
+func (c *Claims) ExpiresAt() *time.Time {
+	if c.SubscriptionExpires == nil {
+		return nil
+	}
+	t := time.Unix(*c.SubscriptionExpires, 0).UTC()
+	return &t
+}
+
 // Claims represents JWT claims from auth-service.
 // Supports both user authentication (JWT) and service authentication (API Key).
 // Includes subscription data for feature gating without per-request lookups.
@@ -30,11 +39,15 @@ type Claims struct {
 	Roles []string `json:"roles,omitempty"`
 
 	// Subscription data - embedded at token issuance for zero-latency feature gating
-	SubscriptionPlan     string         `json:"subscription_plan,omitempty"`     // e.g., "STARTER", "GROWTH", "PROFESSIONAL"
-	SubscriptionFeatures []string       `json:"subscription_features,omitempty"` // enabled feature codes
-	SubscriptionLimits   map[string]int `json:"subscription_limits,omitempty"`   // usage limits per metric
-	SubscriptionStatus   string         `json:"subscription_status,omitempty"`   // "ACTIVE", "TRIAL", "EXPIRED", "CANCELLED"
-	SubscriptionExpires  *time.Time     `json:"subscription_expires,omitempty"`  // current period end
+	SubscriptionPlan     string         `json:"sub_plan,omitempty"`     // e.g., "STARTER", "GROWTH", "PROFESSIONAL"
+	SubscriptionFeatures []string       `json:"sub_features,omitempty"` // enabled feature codes
+	SubscriptionLimits   map[string]int `json:"sub_limits,omitempty"`   // usage limits per metric
+	SubscriptionStatus   string         `json:"sub_status,omitempty"`   // "ACTIVE", "TRIAL", "EXPIRED", "CANCELLED"
+	SubscriptionExpires  *int64         `json:"sub_expires,omitempty"`  // current period end as Unix timestamp
+
+	// Billing model and demo flags — used for subscription gate bypass
+	BillingMode string `json:"billing_mode,omitempty"` // "service_charge" bypasses subscription gating
+	IsDemo      bool   `json:"is_demo,omitempty"`      // true for demo tenant/users, bypasses subscription gating
 
 	// Service account identification (for API Key auth)
 	ServiceName string `json:"service_name,omitempty"` // e.g., "ordering-service", "logistics-service"
@@ -232,7 +245,11 @@ func (c *Claims) GetLimit(metric string) int {
 }
 
 // IsSubscriptionActive checks if the subscription is currently active.
+// Service-charge tenants and demo tenants always bypass subscription gating.
 func (c *Claims) IsSubscriptionActive() bool {
+	if c.BillingMode == "service_charge" || c.IsDemo {
+		return true
+	}
 	switch c.SubscriptionStatus {
 	case "ACTIVE", "TRIAL":
 		return true

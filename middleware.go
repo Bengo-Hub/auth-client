@@ -324,8 +324,9 @@ func RequireFeature(feature string) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Superuser bypasses feature checks
-			if claims.IsSuperuser() {
+			// Platform owner, superuser, demo and service-charge tenants bypass feature
+			// checks (service-charge pays per transaction; demo/owner get everything).
+			if claims.IsPlatformOwner || claims.IsSuperuser() || claims.IsDemo || claims.BillingMode == "service_charge" {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -357,7 +358,7 @@ func RequireAnyFeature(features ...string) func(http.Handler) http.Handler {
 				return
 			}
 
-			if claims.IsSuperuser() {
+			if claims.IsPlatformOwner || claims.IsSuperuser() || claims.IsDemo || claims.BillingMode == "service_charge" {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -388,7 +389,7 @@ func RequirePlan(plan string) func(http.Handler) http.Handler {
 				return
 			}
 
-			if claims.IsSuperuser() {
+			if claims.IsPlatformOwner || claims.IsSuperuser() || claims.IsDemo || claims.BillingMode == "service_charge" {
 				next.ServeHTTP(w, r)
 				return
 			}

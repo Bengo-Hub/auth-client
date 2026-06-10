@@ -39,15 +39,16 @@ type Claims struct {
 	Roles []string `json:"roles,omitempty"`
 
 	// Subscription data - embedded at token issuance for zero-latency feature gating
-	SubscriptionPlan     string         `json:"sub_plan,omitempty"`     // e.g., "STARTER", "GROWTH", "PROFESSIONAL"
-	SubscriptionFeatures []string       `json:"sub_features,omitempty"` // enabled feature codes
-	SubscriptionLimits   map[string]int `json:"sub_limits,omitempty"`   // usage limits per metric
-	SubscriptionStatus   string         `json:"sub_status,omitempty"`   // "ACTIVE", "TRIAL", "EXPIRED", "CANCELLED"
-	SubscriptionExpires  *int64         `json:"sub_expires,omitempty"`  // current period end as Unix timestamp
+	SubscriptionPlan     string         `json:"sub_plan,omitempty"`              // e.g., "STARTER", "GROWTH", "PROFESSIONAL"
+	SubscriptionFeatures []string       `json:"subscription_features,omitempty"` // enabled feature codes (tag must match auth-api token minting + apikey.go)
+	SubscriptionLimits   map[string]int `json:"sub_limits,omitempty"`            // usage limits per metric
+	SubscriptionStatus   string         `json:"sub_status,omitempty"`            // "ACTIVE", "TRIAL", "EXPIRED", "CANCELLED"
+	SubscriptionExpires  *int64         `json:"sub_expires,omitempty"`           // current period end as Unix timestamp
 
 	// Billing model and demo flags — used for subscription gate bypass
-	BillingMode string `json:"billing_mode,omitempty"` // "service_charge" bypasses subscription gating
-	IsDemo      bool   `json:"is_demo,omitempty"`      // true for demo tenant/users, bypasses subscription gating
+	BillingMode  string `json:"billing_mode,omitempty"`      // "service_charge" bypasses subscription gating
+	IsDemo       bool   `json:"is_demo,omitempty"`           // true for demo tenant/users, bypasses subscription gating
+	AllowOverage bool   `json:"sub_allow_overage,omitempty"` // tenant opted in to pay-as-you-go extra usage
 
 	// Service account identification (for API Key auth)
 	ServiceName string `json:"service_name,omitempty"` // e.g., "ordering-service", "logistics-service"
@@ -242,6 +243,42 @@ func (c *Claims) GetLimit(metric string) int {
 		return 0
 	}
 	return c.SubscriptionLimits[metric]
+}
+
+// IsGatingExempt reports whether this token bypasses ALL subscription gating
+// (feature locks AND limit enforcement). Platform owners, superusers, demo
+// tenants/users, and service-charge (pay-per-transaction) tenants are exempt.
+// Every gate path should funnel through this single helper.
+func (c *Claims) IsGatingExempt() bool {
+	return c.IsPlatformOwner || c.IsSuperuser() || c.IsDemo || c.BillingMode == "service_charge"
+}
+
+// OverageEnabled reports whether the tenant has opted in to pay-as-you-go extra usage.
+func (c *Claims) OverageEnabled() bool {
+	return c.AllowOverage
+}
+
+// overageEligibleLimitKeys is the canonical set of metered throughput plan-limit keys
+// that support pay-as-you-go overage. It mirrors subscription-service's billing
+// overage-eligibility registry. Structural caps (max_outlets, max_devices, max_cashiers,
+// max_tables, max_riders, inventory_max_*, max_wallets, max_currencies, max_admins,
+// max_staff, max_suppliers) are intentionally absent — they hard-block and require upgrade.
+var overageEligibleLimitKeys = map[string]struct{}{
+	"max_orders_per_day":             {},
+	"max_transactions_per_month":     {},
+	"api_calls_per_month":            {},
+	"sms_notifications_per_day":      {},
+	"email_notifications_per_day":    {},
+	"webhook_calls_per_day":          {},
+	"live_tracking_requests_per_day": {},
+	"routing_requests_per_day":       {},
+}
+
+// IsOverageEligibleLimit reports whether a plan-limit key is a metered throughput limit
+// that may be exceeded via pay-as-you-go overage (vs a structural cap that hard-blocks).
+func IsOverageEligibleLimit(limitKey string) bool {
+	_, ok := overageEligibleLimitKeys[limitKey]
+	return ok
 }
 
 // IsSubscriptionActive checks if the subscription is currently active.

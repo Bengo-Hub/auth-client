@@ -11,7 +11,10 @@ func TestIsGatingExempt(t *testing.T) {
 		{"plain tenant user", Claims{SubscriptionStatus: "ACTIVE"}, false},
 		{"admin is still gated", Claims{Roles: []string{"admin"}}, false},
 		{"platform owner", Claims{IsPlatformOwner: true}, true},
-		{"superuser role", Claims{Roles: []string{"superuser"}}, true},
+		// A tenant superuser is a tenant-level admin and is NOT subscription-exempt — otherwise
+		// any tenant admin could unlock paid features for free.
+		{"superuser role is gated", Claims{Roles: []string{"superuser"}}, false},
+		{"explicitly exempt tenant", Claims{SubscriptionExempt: true}, true},
 		{"demo tenant", Claims{IsDemo: true}, true},
 		{"service charge", Claims{BillingMode: "service_charge"}, true},
 		{"recurring billing not exempt", Claims{BillingMode: "recurring"}, false},

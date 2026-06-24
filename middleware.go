@@ -203,8 +203,9 @@ func RequirePermission(permission string) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Superuser and platform owner bypass all permission checks
-			if claims.IsSuperuser() || claims.IsPlatformOwner {
+			// Only the platform owner bypasses permission checks. A tenant superuser is a
+			// tenant-level admin and must satisfy explicit permissions like any other user.
+			if claims.IsPlatformOwner {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -230,8 +231,9 @@ func RequireAnyPermission(permissions ...string) func(http.Handler) http.Handler
 				return
 			}
 
-			// Superuser and platform owner bypass all permission checks
-			if claims.IsSuperuser() || claims.IsPlatformOwner {
+			// Only the platform owner bypasses permission checks. A tenant superuser is a
+			// tenant-level admin and must satisfy explicit permissions like any other user.
+			if claims.IsPlatformOwner {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -257,8 +259,9 @@ func RequireAllPermissions(permissions ...string) func(http.Handler) http.Handle
 				return
 			}
 
-			// Superuser and platform owner bypass all permission checks
-			if claims.IsSuperuser() || claims.IsPlatformOwner {
+			// Only the platform owner bypasses permission checks. A tenant superuser is a
+			// tenant-level admin and must satisfy explicit permissions like any other user.
+			if claims.IsPlatformOwner {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -273,19 +276,15 @@ func RequireAllPermissions(permissions ...string) func(http.Handler) http.Handle
 	}
 }
 
-// RequirePlatformOwner creates middleware that requires the user to be a platform owner.
-// Superuser role always bypasses this check.
+// RequirePlatformOwner creates middleware that requires the user to be a platform owner
+// (a user of the platform's own operating tenant). A tenant superuser is NOT a platform
+// owner and must never reach platform-level pages/configs through this gate.
 func RequirePlatformOwner() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			claims, ok := ClaimsFromContext(r.Context())
 			if !ok {
 				writeAuthError(w, http.StatusUnauthorized, "missing claims")
-				return
-			}
-
-			if claims.IsSuperuser() {
-				next.ServeHTTP(w, r)
 				return
 			}
 
@@ -324,9 +323,9 @@ func RequireFeature(feature string) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Platform owner, superuser, demo and service-charge tenants bypass feature
-			// checks (service-charge pays per transaction; demo/owner get everything).
-			if claims.IsPlatformOwner || claims.IsSuperuser() || claims.IsDemo || claims.BillingMode == "service_charge" {
+			// Platform owner, explicitly-exempt tenants, demo and service-charge tenants bypass
+			// feature checks. Tenant superusers do NOT bypass — they pay for features like anyone.
+			if claims.IsGatingExempt() {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -358,7 +357,7 @@ func RequireAnyFeature(features ...string) func(http.Handler) http.Handler {
 				return
 			}
 
-			if claims.IsPlatformOwner || claims.IsSuperuser() || claims.IsDemo || claims.BillingMode == "service_charge" {
+			if claims.IsGatingExempt() {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -389,7 +388,7 @@ func RequirePlan(plan string) func(http.Handler) http.Handler {
 				return
 			}
 
-			if claims.IsPlatformOwner || claims.IsSuperuser() || claims.IsDemo || claims.BillingMode == "service_charge" {
+			if claims.IsGatingExempt() {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -420,7 +419,7 @@ func RequireActiveSubscription() func(http.Handler) http.Handler {
 				return
 			}
 
-			if claims.IsSuperuser() {
+			if claims.IsGatingExempt() {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -439,7 +438,8 @@ func RequireActiveSubscription() func(http.Handler) http.Handler {
 // RequireActiveSubscriptionForMutations creates middleware that enforces active subscription
 // only on mutation requests (POST, PUT, PATCH, DELETE). Read-only requests (GET, HEAD, OPTIONS)
 // pass through unconditionally so users can still view data with an expired subscription.
-// Superusers and platform owners always bypass.
+// Gating-exempt tokens (platform owner, exempt tenants, service-charge, demo) always bypass;
+// tenant superusers do NOT.
 func RequireActiveSubscriptionForMutations() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -456,7 +456,9 @@ func RequireActiveSubscriptionForMutations() func(http.Handler) http.Handler {
 				return
 			}
 
-			if claims.IsSuperuser() || claims.IsPlatformOwner || claims.IsSubscriptionActive() {
+			// IsSubscriptionActive() already returns true for gating-exempt tokens (platform
+			// owner, exempt tenants, service-charge, demo). Tenant superusers are not exempt.
+			if claims.IsSubscriptionActive() {
 				next.ServeHTTP(w, r)
 				return
 			}

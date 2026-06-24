@@ -49,6 +49,11 @@ type Claims struct {
 	BillingMode  string `json:"billing_mode,omitempty"`      // "service_charge" bypasses subscription gating
 	IsDemo       bool   `json:"is_demo,omitempty"`           // true for demo tenant/users, bypasses subscription gating
 	AllowOverage bool   `json:"sub_allow_overage,omitempty"` // tenant opted in to pay-as-you-go extra usage
+	// SubscriptionExempt marks tenants explicitly exempted from subscription billing/gating by
+	// the platform (configured in subscriptions-api). Exempt tenants bypass ALL subscription
+	// gating (features + limits + active-subscription checks). This is a deliberate per-tenant
+	// grant — NOT something an ordinary tenant superuser can self-assign.
+	SubscriptionExempt bool `json:"sub_exempt,omitempty"`
 
 	// Service account identification (for API Key auth)
 	ServiceName string `json:"service_name,omitempty"` // e.g., "ordering-service", "logistics-service"
@@ -246,11 +251,15 @@ func (c *Claims) GetLimit(metric string) int {
 }
 
 // IsGatingExempt reports whether this token bypasses ALL subscription gating
-// (feature locks AND limit enforcement). Platform owners, superusers, demo
-// tenants/users, and service-charge (pay-per-transaction) tenants are exempt.
-// Every gate path should funnel through this single helper.
+// (feature locks AND limit enforcement). ONLY the platform owner (the platform's own
+// operating/demo tenant), tenants explicitly marked subscription-exempt by the platform,
+// and service-charge (pay-per-transaction) tenants are exempt.
+//
+// A tenant superuser is NOT exempt: superuser is a tenant-level admin role and must never
+// bypass subscription gating — otherwise any tenant admin could unlock paid features for free.
+// Every subscription gate path funnels through this single helper.
 func (c *Claims) IsGatingExempt() bool {
-	return c.IsPlatformOwner || c.IsSuperuser() || c.IsDemo || c.BillingMode == "service_charge"
+	return c.IsPlatformOwner || c.IsDemo || c.BillingMode == "service_charge" || c.SubscriptionExempt
 }
 
 // OverageEnabled reports whether the tenant has opted in to pay-as-you-go extra usage.
@@ -282,9 +291,10 @@ func IsOverageEligibleLimit(limitKey string) bool {
 }
 
 // IsSubscriptionActive checks if the subscription is currently active.
-// Service-charge tenants and demo tenants always bypass subscription gating.
+// Gating-exempt tokens (platform owner, explicitly-exempt tenants, service-charge, demo)
+// always count as active.
 func (c *Claims) IsSubscriptionActive() bool {
-	if c.BillingMode == "service_charge" || c.IsDemo {
+	if c.IsGatingExempt() {
 		return true
 	}
 	switch c.SubscriptionStatus {

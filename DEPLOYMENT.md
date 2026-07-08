@@ -2,11 +2,11 @@
 
 ## Overview
 
-The `shared-auth-client` library is used across all BengoBox microservices for JWT validation and authentication. This library is published as an independent GitHub repository (`github.com/Bengo-Hub/shared-auth-client`) in the Bengo-Hub organization.
+The `shared-auth-client` library is used across all Codevertex microservices for JWT validation and authentication. This library is published as an independent GitHub repository (`github.com/Bengo-Hub/shared-auth-client`) in the Bengo-Hub organization.
 
 ## Architecture Context
 
-**Important:** Each BengoBox service (ordering-backend, notifications-api, treasury-api, inventory-api, pos-api, logistics-api) is an **independent GitHub repository** in the `Bengo-Hub` organization. The `BengoBox` folder is just a local root directory where developers clone all repositories for local development - it is **not** a monorepo.
+**Important:** Each Codevertex service (ordering-backend, notifications-api, treasury-api, inventory-api, pos-api, logistics-api) is an **independent GitHub repository** in the `Bengo-Hub` organization. The `Codevertex` folder is just a local root directory where developers clone all repositories for local development - it is **not** a monorepo.
 
 ## Module Structure
 
@@ -24,18 +24,18 @@ shared-auth-client/  (Independent GitHub repository)
 
 ### Option 1: Go Workspace (Local Development) ✅ Recommended for Local
 
-When developing locally, clone all repositories into a parent directory (e.g., `BengoBox/`) and use `go.work`:
+When developing locally, clone all repositories into a parent directory (e.g., `Codevertex/`) and use `go.work`:
 
 ```bash
 # Clone all repositories
-cd BengoBox/
+cd Codevertex/
 git clone https://github.com/Bengo-Hub/ordering-backend.git ordering-service/ordering-backend
 git clone https://github.com/Bengo-Hub/notifications-api.git notifications-service/notifications-api
 git clone https://github.com/Bengo-Hub/shared-auth-client.git shared/auth-client
 # ... clone other services
 
-# Create go.work at BengoBox root
-cd BengoBox/
+# Create go.work at Codevertex root
+cd Codevertex/
 go work init ./ordering-service/ordering-backend ./notifications-service/notifications-api ./shared/auth-client
 ```
 

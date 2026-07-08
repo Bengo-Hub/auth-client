@@ -2,7 +2,7 @@
 
 ## Repository Structure
 
-**Important:** `shared-auth-client` is an **independent GitHub repository** (`github.com/Bengo-Hub/shared-auth-client`) in the Bengo-Hub organization. Each BengoBox service (ordering-backend, notifications-api, etc.) is also an independent repository. The `BengoBox` folder is just a local root directory where developers clone repositories - it is **not** a monorepo.
+**Important:** `shared-auth-client` is an **independent GitHub repository** (`github.com/Bengo-Hub/shared-auth-client`) in the Bengo-Hub organization. Each Codevertex service (ordering-backend, notifications-api, etc.) is also an independent repository. The `Codevertex` folder is just a local root directory where developers clone repositories - it is **not** a monorepo.
 
 ## Tagging the Library
 
@@ -27,7 +27,7 @@ require (
 )
 ```
 
-**Note:** For local development, developers can use `go.work` at the `BengoBox` root to link all cloned repositories together.
+**Note:** For local development, developers can use `go.work` at the `Codevertex` root to link all cloned repositories together.
 
 ### Step 3: Verify
 
@@ -43,8 +43,8 @@ When developing locally, clone all repositories into a parent directory:
 
 ```bash
 # Create parent directory
-mkdir -p BengoBox
-cd BengoBox/
+mkdir -p Codevertex
+cd Codevertex/
 
 # Clone all repositories
 git clone https://github.com/Bengo-Hub/ordering-backend.git ordering-service/ordering-backend
@@ -55,8 +55,8 @@ git clone https://github.com/Bengo-Hub/pos-api.git pos-service/pos-api
 git clone https://github.com/Bengo-Hub/logistics-api.git logistics-service/logistics-api
 git clone https://github.com/Bengo-Hub/shared-auth-client.git shared/auth-client
 
-# Create go.work at BengoBox root
-cd BengoBox/
+# Create go.work at Codevertex root
+cd Codevertex/
 go work init \
   ./ordering-service/ordering-backend \
   ./notifications-service/notifications-api \

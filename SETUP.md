@@ -62,8 +62,8 @@ Once the repository is created and tagged, update each service:
 
 1. Clone all repositories into a parent directory:
    ```bash
-   mkdir -p BengoBox
-   cd BengoBox/
+   mkdir -p Codevertex
+   cd Codevertex/
    
    git clone https://github.com/Bengo-Hub/shared-auth-client.git shared/auth-client
    git clone https://github.com/Bengo-Hub/ordering-backend.git ordering-service/ordering-backend
@@ -74,9 +74,9 @@ Once the repository is created and tagged, update each service:
    git clone https://github.com/Bengo-Hub/logistics-api.git logistics-service/logistics-api
    ```
 
-2. Create `go.work` at BengoBox root:
+2. Create `go.work` at Codevertex root:
    ```bash
-   cd BengoBox/
+   cd Codevertex/
    go work init \
      ./shared/auth-client \
      ./ordering-service/ordering-backend \

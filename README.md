@@ -1,6 +1,6 @@
 # Shared Auth Client Library
 
-A Go library for validating JWT tokens issued by auth-service using JWKS. This library is shared across all BengoBox microservices for consistent authentication and authorization.
+A Go library for validating JWT tokens issued by auth-service using JWKS. This library is shared across all Codevertex microservices for consistent authentication and authorization.
 
 **Repository:** `github.com/Bengo-Hub/shared-auth-client`
 
@@ -18,18 +18,18 @@ require (
 
 ### Local Development (Go Workspace)
 
-When developing locally, clone all repositories into a parent directory (e.g., `BengoBox/`) and use `go.work`:
+When developing locally, clone all repositories into a parent directory (e.g., `Codevertex/`) and use `go.work`:
 
 ```bash
 # Clone repositories
-cd BengoBox/
+cd Codevertex/
 git clone https://github.com/Bengo-Hub/shared-auth-client.git shared/auth-client
 git clone https://github.com/Bengo-Hub/ordering-backend.git ordering-service/ordering-backend
 git clone https://github.com/Bengo-Hub/notifications-api.git notifications-service/notifications-api
 # ... clone other services
 
-# Create go.work at BengoBox root
-cd BengoBox/
+# Create go.work at Codevertex root
+cd Codevertex/
 go work init ./shared/auth-client ./ordering-service/ordering-backend ./notifications-service/notifications-api
 ```
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -477,4 +478,149 @@ func writeFeatureError(w http.ResponseWriter, status int, code, message string) 
 		"code":    code,
 		"upgrade": true,
 	})
+}
+
+// ============================================================================
+// Canonical feature-lock gate (shared fleet-wide)
+// ============================================================================
+
+// featureUpgradeURL is the default upgrade deep-link emitted in the canonical feature-lock body.
+// Services may override it once at startup via SetFeatureUpgradeURL to point at their own
+// settings/billing route (the frontend routes upgrades from the catalog, so this is informational).
+var featureUpgradeURL = "/settings?tab=subscription"
+
+// SetFeatureUpgradeURL overrides the default upgrade URL used by RequireFeatureCode/
+// RequireAnyFeatureCode/WriteFeatureLocked. No-op for an empty string. Call once at service init.
+func SetFeatureUpgradeURL(u string) {
+	if u != "" {
+		featureUpgradeURL = u
+	}
+}
+
+// WriteFeatureLocked writes the ONE canonical 403 feature-lock response body used across every
+// service. Frontends' isSubscriptionError() discriminates on `code`. Pass an empty upgradeURL to
+// use the package default (SetFeatureUpgradeURL).
+func WriteFeatureLocked(w http.ResponseWriter, code, upgradeURL string) {
+	if upgradeURL == "" {
+		upgradeURL = featureUpgradeURL
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"code":             "feature_not_available",
+		"error":            "feature_not_available",
+		"message":          "This feature is not available on your current plan.",
+		"required_feature": code,
+		"upgrade":          true,
+		"upgrade_url":      upgradeURL,
+	})
+}
+
+// RequireFeatureCode is the canonical feature-lock middleware every service delegates to. It
+// checks ONLY entitlement (claims.FeatureEnabled: exempt || HasFeature) and does NOT check
+// active-subscription — that is enforced separately by RequireActiveSubscriptionForMutations*, so
+// feature-gated READS still pass for expired tenants ("reads always pass"). Missing claims pass
+// through (the auth middleware owns authn). Rejections use the uniform WriteFeatureLocked body.
+//
+// This differs from RequireFeature (which bundles an active-subscription check): use
+// RequireFeatureCode for the fleet-uniform feature gate; keep RequireFeature only where you
+// deliberately want feature + active-sub in one middleware.
+func RequireFeatureCode(feature string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims, ok := ClaimsFromContext(r.Context())
+			if !ok {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if claims.FeatureEnabled(feature) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			WriteFeatureLocked(w, feature, "")
+		})
+	}
+}
+
+// RequireAnyFeatureCode passes when the tenant is entitled to ANY of the given feature codes
+// (exempt tenants always pass). Same feature-only semantics as RequireFeatureCode.
+func RequireAnyFeatureCode(features ...string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims, ok := ClaimsFromContext(r.Context())
+			if !ok {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if claims.IsGatingExempt() || claims.HasAnyFeature(features...) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			code := ""
+			if len(features) > 0 {
+				code = features[0]
+			}
+			WriteFeatureLocked(w, code, "")
+		})
+	}
+}
+
+// RequireMinTier gates a route on the tenant's plan TIER rank (from the sub_tier claim, via
+// PlanTierOrder) rather than a specific feature. Exempt tenants pass; an inactive subscription is
+// blocked (403 subscription_inactive); a below-tier tenant gets 403 plan_upgrade_required.
+func RequireMinTier(minTier int) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims, ok := ClaimsFromContext(r.Context())
+			if !ok {
+				writeAuthError(w, http.StatusUnauthorized, "missing claims")
+				return
+			}
+			if claims.IsGatingExempt() {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if !claims.IsSubscriptionActive() {
+				writeFeatureError(w, http.StatusForbidden, "subscription_inactive", "Your subscription is not active")
+				return
+			}
+			if claims.PlanTierOrder() < minTier {
+				writeFeatureError(w, http.StatusForbidden, "plan_upgrade_required", "This feature requires a higher plan tier")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequireActiveSubscriptionForMutationsWithGrace is like RequireActiveSubscriptionForMutations but
+// grants a post-expiry grace window (graceDays) during which an EXPIRED tenant may still mutate —
+// making the pos/ordering 7-day grace uniform fleet-wide. While in grace it sets the
+// X-Sub-Grace-Days-Left header so the UI can warn. Reads (GET/HEAD/OPTIONS) always pass; missing
+// claims pass through; beyond grace → 403 subscription_inactive.
+func RequireActiveSubscriptionForMutationsWithGrace(graceDays int) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
+				next.ServeHTTP(w, r)
+				return
+			}
+			claims, ok := ClaimsFromContext(r.Context())
+			if !ok {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if claims.IsSubscriptionActive() {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if left, inGrace := claims.GraceDaysLeft(graceDays); inGrace {
+				w.Header().Set("X-Sub-Grace-Days-Left", strconv.Itoa(left))
+				next.ServeHTTP(w, r)
+				return
+			}
+			writeFeatureError(w, http.StatusForbidden, "subscription_inactive",
+				"Your subscription is not active. Please renew to continue.")
+		})
+	}
 }

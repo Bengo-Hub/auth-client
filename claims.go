@@ -21,12 +21,12 @@ func (c *Claims) ExpiresAt() *time.Time {
 // Includes subscription data for feature gating without per-request lookups.
 type Claims struct {
 	// Core identity
-	SessionID  string   `json:"sid"`
-	TenantID   string   `json:"tenant_id,omitempty"`
-	TenantSlug string   `json:"tenant_slug,omitempty"`
-	Scope      []string `json:"scope,omitempty"`
-	Email      string   `json:"email,omitempty"`
-	IsPlatformOwner bool `json:"is_platform_owner,omitempty"`
+	SessionID       string   `json:"sid"`
+	TenantID        string   `json:"tenant_id,omitempty"`
+	TenantSlug      string   `json:"tenant_slug,omitempty"`
+	Scope           []string `json:"scope,omitempty"`
+	Email           string   `json:"email,omitempty"`
+	IsPlatformOwner bool     `json:"is_platform_owner,omitempty"`
 
 	// Outlet / branch context — set when a single outlet is selected at login or via select-outlet.
 	// Empty for HQ/admin users who can see all outlets and use X-Outlet-ID header instead.
@@ -44,6 +44,7 @@ type Claims struct {
 	SubscriptionLimits   map[string]int `json:"sub_limits,omitempty"`            // usage limits per metric
 	SubscriptionStatus   string         `json:"sub_status,omitempty"`            // "ACTIVE", "TRIAL", "EXPIRED", "CANCELLED"
 	SubscriptionExpires  *int64         `json:"sub_expires,omitempty"`           // current period end as Unix timestamp
+	SubscriptionTier     int            `json:"sub_tier,omitempty"`              // resolved plan tier rank (1=Starter,2=Growth,3=Professional; higher for licenses); 0 = unknown/exempt
 
 	// Billing model and demo flags — used for subscription gate bypass
 	BillingMode  string `json:"billing_mode,omitempty"`      // "service_charge" bypasses subscription gating
@@ -56,9 +57,9 @@ type Claims struct {
 	SubscriptionExempt bool `json:"sub_exempt,omitempty"`
 
 	// Service account identification (for API Key auth)
-	ServiceName string `json:"service_name,omitempty"` // e.g., "ordering-service", "logistics-service"
-	Permissions []string `json:"permissions,omitempty"` // Canonical permission codes
-	IsService   bool     `json:"is_service,omitempty"`  // true if this is a service account, not a user
+	ServiceName string   `json:"service_name,omitempty"` // e.g., "ordering-service", "logistics-service"
+	Permissions []string `json:"permissions,omitempty"`  // Canonical permission codes
+	IsService   bool     `json:"is_service,omitempty"`   // true if this is a service account, not a user
 
 	jwt.RegisteredClaims
 }
@@ -317,8 +318,9 @@ func (c *Claims) IsTrialSubscription() bool {
 // Plan Tier Helpers
 // ============================================================================
 
-// PlanTier returns the subscription plan tier for comparison.
-// Higher values = higher tier plans.
+// PlanTier returns a tier rank derived from the plan NAME string. Legacy/brittle: it only
+// recognizes STARTER/GROWTH/PROFESSIONAL/ENTERPRISE (and FREE/BASIC/PRO aliases) and returns 0
+// for real plan codes like POWERSUITE_GROWTH / ERP_STARTER_ONE_TIME. Prefer PlanTierOrder().
 func (c *Claims) PlanTier() int {
 	switch c.SubscriptionPlan {
 	case "STARTER", "FREE":
@@ -334,8 +336,47 @@ func (c *Claims) PlanTier() int {
 	}
 }
 
-// IsAtLeastPlan checks if the subscription is at least the specified plan tier.
+// PlanTierOrder returns the tenant's real plan tier rank. It prefers the sub_tier claim
+// (the resolved plan's tier_order minted by auth-api from subscriptions-api) and falls back to
+// the legacy name-based PlanTier() for tokens minted before sub_tier existed. This is the
+// authoritative tier accessor — use it (not PlanTier) for tier comparisons.
+func (c *Claims) PlanTierOrder() int {
+	if c.SubscriptionTier > 0 {
+		return c.SubscriptionTier
+	}
+	return c.PlanTier()
+}
+
+// IsAtLeastPlan checks if the subscription tier is at least that of the specified plan.
+// The tenant side uses the real PlanTierOrder(); the required side still maps the plan NAME
+// via PlanTier(), so pass a tier NAME (STARTER/GROWTH/PROFESSIONAL/ENTERPRISE), not a plan code.
 func (c *Claims) IsAtLeastPlan(plan string) bool {
 	requiredTier := (&Claims{SubscriptionPlan: plan}).PlanTier()
-	return c.PlanTier() >= requiredTier
+	return c.PlanTierOrder() >= requiredTier
+}
+
+// FeatureEnabled is the single canonical feature-lock decision shared by RequireFeatureCode and
+// every per-service gate: exempt tenants always pass; otherwise the feature code must be present
+// in the subscription's feature set. It deliberately does NOT check active-subscription — that is
+// a separate concern (RequireActiveSubscriptionForMutations*), so feature-gated reads still work.
+func (c *Claims) FeatureEnabled(code string) bool {
+	return c.IsGatingExempt() || c.HasFeature(code)
+}
+
+// GraceDaysLeft reports the whole days of post-expiry grace remaining and whether the tenant is
+// currently within the grace window. Grace applies ONLY to an EXPIRED subscription with a known
+// period end (sub_expires): the window is sub_expires + graceDays. CANCELLED/SUSPENDED get no
+// grace (deliberate stop), and exempt/active tenants are never "in grace". Mirrors the pos/ordering
+// 7-day grace, now available fleet-wide.
+func (c *Claims) GraceDaysLeft(graceDays int) (int, bool) {
+	if c.IsGatingExempt() || graceDays <= 0 || c.SubscriptionStatus != "EXPIRED" || c.SubscriptionExpires == nil {
+		return 0, false
+	}
+	graceEnd := *c.SubscriptionExpires + int64(graceDays)*86400
+	now := time.Now().Unix()
+	if now >= graceEnd {
+		return 0, false
+	}
+	left := int((graceEnd - now + 86399) / 86400) // ceil to whole days
+	return left, true
 }

@@ -45,6 +45,10 @@ type Claims struct {
 	SubscriptionStatus   string         `json:"sub_status,omitempty"`            // "ACTIVE", "TRIAL", "EXPIRED", "CANCELLED"
 	SubscriptionExpires  *int64         `json:"sub_expires,omitempty"`           // current period end as Unix timestamp
 	SubscriptionTier     int            `json:"sub_tier,omitempty"`              // resolved plan tier rank (1=Starter,2=Growth,3=Professional; higher for licenses); 0 = unknown/exempt
+	// ActiveProducts is the product_code of every currently-active per-product subscription
+	// line (tag must match auth-api token minting) — lets the app-switcher (shared-ui-lib)
+	// show only activated apps without a per-page-load network call.
+	ActiveProducts []string `json:"active_products,omitempty"`
 
 	// Billing model and demo flags — used for subscription gate bypass
 	BillingMode  string `json:"billing_mode,omitempty"`      // "service_charge" bypasses subscription gating

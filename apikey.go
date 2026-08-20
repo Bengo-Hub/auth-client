@@ -29,6 +29,7 @@ type apiKeyInfo struct {
 	subscriptionFeatures []string
 	subscriptionLimits   map[string]int
 	subscriptionStatus   string
+	environment          string
 	expiresAt            time.Time
 }
 
@@ -44,6 +45,12 @@ type APIKeyValidationResult struct {
 	SubscriptionFeatures []string       `json:"subscription_features"`
 	SubscriptionLimits   map[string]int `json:"subscription_limits"`
 	SubscriptionStatus   string         `json:"subscription_status"`
+	// Environment is "sandbox" or "production" for a bng_app_* App credential (auth-api's
+	// ValidateAPIKeyResponse.Environment); "production" for a plain bng_* APIKey, which has no
+	// environment concept of its own. Previously silently dropped by this client (the same class
+	// of bug independently found and fixed in treasury-api's own local copy of this response
+	// shape) -- fixed here once, at the source, instead of re-patching every consumer.
+	Environment string `json:"environment"`
 }
 
 // NewAPIKeyValidator creates a new API key validator.
@@ -86,6 +93,7 @@ func (v *APIKeyValidator) ValidateAPIKeyFull(ctx context.Context, apiKey string)
 				SubscriptionFeatures: info.subscriptionFeatures,
 				SubscriptionLimits:   info.subscriptionLimits,
 				SubscriptionStatus:   info.subscriptionStatus,
+				Environment:          info.environment,
 			}, nil
 		}
 		// Cache expired, remove it
@@ -126,6 +134,7 @@ func (v *APIKeyValidator) ValidateAPIKeyFull(ctx context.Context, apiKey string)
 		subscriptionFeatures: result.SubscriptionFeatures,
 		subscriptionLimits:   result.SubscriptionLimits,
 		subscriptionStatus:   result.SubscriptionStatus,
+		environment:          result.Environment,
 		expiresAt:            time.Now().Add(v.cacheTTL),
 	}
 

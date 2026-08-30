@@ -247,6 +247,22 @@ func (c *Claims) HasAllFeatures(features ...string) bool {
 	return true
 }
 
+// HasActiveProduct checks if the tenant has an active per-product subscription for the given
+// product code. Exempt tenants (platform owner, explicitly-exempt, service-charge, demo) always
+// pass, mirroring FeatureEnabled's pattern. Use this to gate product-specific purchase/top-up
+// flows (e.g. eTIMS API token wallet) on actual product activation rather than just "logged in".
+func (c *Claims) HasActiveProduct(code string) bool {
+	if c.IsGatingExempt() {
+		return true
+	}
+	for _, p := range c.ActiveProducts {
+		if p == code {
+			return true
+		}
+	}
+	return false
+}
+
 // GetLimit returns the usage limit for a metric. Returns 0 if not set (unlimited or N/A).
 func (c *Claims) GetLimit(metric string) int {
 	if c.SubscriptionLimits == nil {

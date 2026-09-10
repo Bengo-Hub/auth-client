@@ -49,6 +49,13 @@ type Claims struct {
 	// line (tag must match auth-api token minting) — lets the app-switcher (shared-ui-lib)
 	// show only activated apps without a per-page-load network call.
 	ActiveProducts []string `json:"active_products,omitempty"`
+	// ActiveServiceTags is the set of service_tags (ordering/pos/inventory/treasury/logistics/
+	// erp/marketflow/...) the tenant currently has ANY entitlement in (tag must match auth-api
+	// token minting). Coarser than SubscriptionFeatures: it answers "is this whole module part
+	// of the tenant's plan at all" — a PowerSuite tenant below the tier that unlocks its first
+	// ERP feature has none of "erp" here, distinct from having zero of one specific feature
+	// within a module it does have. See RequireServiceAccess / HasServiceAccess.
+	ActiveServiceTags []string `json:"active_service_tags,omitempty"`
 
 	// Billing model and demo flags — used for subscription gate bypass
 	BillingMode  string `json:"billing_mode,omitempty"`      // "service_charge" bypasses subscription gating
@@ -257,6 +264,23 @@ func (c *Claims) HasActiveProduct(code string) bool {
 	}
 	for _, p := range c.ActiveProducts {
 		if p == code {
+			return true
+		}
+	}
+	return false
+}
+
+// HasServiceAccess reports whether the tenant currently has ANY entitlement in the given
+// service_tag (ordering/pos/inventory/treasury/logistics/erp/marketflow/...) — i.e. whether the
+// whole module is part of the tenant's plan at all, not whether one specific feature within it
+// is unlocked. Gating-exempt tokens (platform owner, explicitly-exempt tenant, service-charge,
+// demo) always pass, mirroring HasActiveProduct/FeatureEnabled.
+func (c *Claims) HasServiceAccess(serviceTag string) bool {
+	if c.IsGatingExempt() {
+		return true
+	}
+	for _, t := range c.ActiveServiceTags {
+		if t == serviceTag {
 			return true
 		}
 	}

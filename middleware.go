@@ -565,6 +565,31 @@ func RequireAnyFeatureCode(features ...string) func(http.Handler) http.Handler {
 	}
 }
 
+// RequireServiceAccess blocks a request unless the tenant currently has ANY entitlement in
+// serviceTag (claims.HasServiceAccess — gating-exempt tokens always pass). Unlike
+// RequireActiveSubscriptionForMutations*, this applies to READS as well as writes: the gap it
+// closes is that a tenant whose plan never included a whole module (e.g. a Basic-tier PowerSuite
+// tenant with zero ERP features) could still reach that service's basic, ungated routes via SSO
+// — feature-level gates only lock specific premium sub-features, never the module as a whole.
+// Missing claims pass through (the auth middleware owns authn). 403 code "service_not_subscribed".
+func RequireServiceAccess(serviceTag string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims, ok := ClaimsFromContext(r.Context())
+			if !ok {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if claims.HasServiceAccess(serviceTag) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			writeFeatureError(w, http.StatusForbidden, "service_not_subscribed",
+				"This service is not included in your current plan.")
+		})
+	}
+}
+
 // RequireMinTier gates a route on the tenant's plan TIER rank (from the sub_tier claim, via
 // PlanTierOrder) rather than a specific feature. Exempt tenants pass; an inactive subscription is
 // blocked (403 subscription_inactive); a below-tier tenant gets 403 plan_upgrade_required.

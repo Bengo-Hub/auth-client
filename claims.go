@@ -275,8 +275,17 @@ func (c *Claims) HasActiveProduct(code string) bool {
 // whole module is part of the tenant's plan at all, not whether one specific feature within it
 // is unlocked. Gating-exempt tokens (platform owner, explicitly-exempt tenant, service-charge,
 // demo) always pass, mirroring HasActiveProduct/FeatureEnabled.
+//
+// Service accounts (API-key auth, IsService) also always pass: auth-api's API-key validation
+// response does not carry ActiveServiceTags (or SubscriptionFeatures) today, so an S2S caller's
+// claims here are never populated regardless of the calling tenant's real entitlement — the same
+// ambiguity IsSubscriptionActive() already resolves by defaulting to true for an unset
+// SubscriptionStatus. Re-deriving module access from an always-empty claim would silently break
+// every existing S2S integration rather than close a real gap: the leak this middleware targets
+// is a browser-facing SSO user reaching an unentitled module directly, not internal service
+// calls, which already went through their own caller-side checks before dialing out.
 func (c *Claims) HasServiceAccess(serviceTag string) bool {
-	if c.IsGatingExempt() {
+	if c.IsGatingExempt() || c.IsService {
 		return true
 	}
 	for _, t := range c.ActiveServiceTags {

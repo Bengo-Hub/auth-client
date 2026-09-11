@@ -3,9 +3,11 @@ package authclient
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type contextKey string
@@ -656,6 +658,53 @@ func RequireActiveSubscriptionForMutationsWithGrace(graceDays int) func(http.Han
 			}
 			writeFeatureError(w, http.StatusForbidden, "subscription_inactive",
 				"Your subscription is not active. Please renew to continue.")
+		})
+	}
+}
+
+// RequireSupportFeeCurrentForMutations blocks mutations (reads always pass) once a perpetual/
+// one-time-license tenant's annual support-fee cycle is overdue past its graceDays window. This
+// is an axis independent of RequireActiveSubscriptionForMutationsWithGrace: a one-time license's
+// SubscriptionStatus/SubscriptionExpires never reflects support-fee state at all (the license
+// itself never expires — see subscriptions-api's notPerpetual()).
+//
+// Deliberately does its own direct now-vs-SupportFeeDueAt arithmetic rather than trusting
+// SupportFeeStatus alone or copying RequireActiveSubscriptionForMutationsWithGrace's status-
+// first shape — that shape has a known latent gap (subscriptions-api's expireSubscriptions job
+// keeps SubscriptionStatus "ACTIVE" for the entire internal grace window before ever flipping to
+// EXPIRED, so a naive status-first check effectively grants a second grace period on top of the
+// first). Minting SupportFeeStatus/SupportFeeDueAt fresh at token time from the actual
+// SupportFeeCycle row, then computing grace directly here, mirrors pos-api's own local gate.go
+// pattern (graceStateOf) which exists specifically to avoid that same class of bug.
+//
+// Absent SupportFeeDueAt (no support-fee obligation at all — not a one-time-license tenant, or
+// that family has no SUPPORT_* plan) always passes. Exempt/service tokens always pass.
+func RequireSupportFeeCurrentForMutations(graceDays int) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
+				next.ServeHTTP(w, r)
+				return
+			}
+			claims, ok := ClaimsFromContext(r.Context())
+			if !ok || claims.IsGatingExempt() || claims.IsService || claims.SupportFeeDueAt == nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+			dueAt := time.Unix(*claims.SupportFeeDueAt, 0).UTC()
+			now := time.Now().UTC()
+			if !now.After(dueAt) {
+				next.ServeHTTP(w, r) // not yet due
+				return
+			}
+			graceEnd := dueAt.AddDate(0, 0, graceDays)
+			if now.Before(graceEnd) {
+				w.Header().Set("X-Support-Fee-Grace-Days-Left", strconv.Itoa(int(math.Ceil(graceEnd.Sub(now).Hours()/24))))
+				next.ServeHTTP(w, r)
+				return
+			}
+			writeFeatureError(w, http.StatusForbidden, "support_fee_overdue",
+				"Your annual support fee is overdue. Renewing restores create/edit/delete access.")
 		})
 	}
 }

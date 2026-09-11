@@ -67,6 +67,18 @@ type Claims struct {
 	// grant — NOT something an ordinary tenant superuser can self-assign.
 	SubscriptionExempt bool `json:"sub_exempt,omitempty"`
 
+	// SupportFeeStatus/SupportFeeDueAt drive RequireSupportFeeCurrentForMutations for a
+	// perpetual/one-time-license tenant's annual support-fee obligation — an axis independent
+	// of SubscriptionStatus/SubscriptionExpires (a one-time license's sub_status is always
+	// effectively active and never expires; see notPerpetual() in subscriptions-api). Absent/nil
+	// = the tenant has no support-fee obligation at all (not a one-time-license tenant, or that
+	// family has no SUPPORT_* plan) — the gate always passes, same "absent = pass" convention as
+	// the subscription claims above. SupportFeeDueAt is the tenant's CURRENT SupportFeeCycle's
+	// due_date as a Unix timestamp; minted fresh from the actual cycle row at token time, never
+	// carried forward from a prior token.
+	SupportFeeStatus string `json:"support_fee_status,omitempty"` // "", "CURRENT", "OVERDUE"
+	SupportFeeDueAt  *int64 `json:"support_fee_due_at,omitempty"`
+
 	// Service account identification (for API Key auth)
 	ServiceName string   `json:"service_name,omitempty"` // e.g., "ordering-service", "logistics-service"
 	Permissions []string `json:"permissions,omitempty"`  // Canonical permission codes

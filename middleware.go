@@ -584,8 +584,18 @@ func RequireServiceAccess(serviceTag string) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			writeFeatureError(w, http.StatusForbidden, "service_not_subscribed",
-				"This service is not included in your current plan.")
+			// Inlined rather than writeFeatureError: this gate needs to echo back which
+			// service_tag triggered the block so the frontend can look up the specific plan
+			// that would unlock it (GET /features/catalog's serviceUnlockPlans[service_tag]) and
+			// render a named "Upgrade to <plan>" card instead of a generic toast.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error":       "This service is not included in your current plan.",
+				"code":        "service_not_subscribed",
+				"upgrade":     true,
+				"service_tag": serviceTag,
+			})
 		})
 	}
 }

@@ -57,3 +57,22 @@ func TestAPIKeyValidatorConcurrentAndCached(t *testing.T) {
 		t.Fatal("Invalidate must force a fresh lookup")
 	}
 }
+
+func TestInvalidateAPIKeyHashReachesEveryValidator(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		_, _ = w.Write([]byte(`{"tenant_id":"t1"}`))
+	}))
+	defer srv.Close()
+	a, b := NewAPIKeyValidator(srv.URL, nil), NewAPIKeyValidator(srv.URL, nil)
+	_, _ = a.ValidateAPIKeyFull(context.Background(), "k")
+	_, _ = b.ValidateAPIKeyFull(context.Background(), "k")
+	InvalidateAPIKeyHash(HashAPIKey("k"))
+	before := atomic.LoadInt32(&calls)
+	_, _ = a.ValidateAPIKeyFull(context.Background(), "k")
+	_, _ = b.ValidateAPIKeyFull(context.Background(), "k")
+	if atomic.LoadInt32(&calls) != before+2 {
+		t.Fatal("both validators must refetch after a broadcast invalidation")
+	}
+}

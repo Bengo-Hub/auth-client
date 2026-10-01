@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hashicorp/golang-lru/v2/expirable"
@@ -60,11 +61,39 @@ func NewAPIKeyValidator(authServiceURL string, httpClient *http.Client) *APIKeyV
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 10 * time.Second}
 	}
-	return &APIKeyValidator{
+	v := &APIKeyValidator{
 		authServiceURL: strings.TrimSuffix(authServiceURL, "/"),
 		httpClient:     httpClient,
 		cache:          expirable.NewLRU[string, *APIKeyValidationResult](apiKeyCacheSize, nil, apiKeyCacheTTL),
 		rejected:       expirable.NewLRU[string, int](apiKeyCacheSize, nil, apiKeyRejectedTTL),
+	}
+	validatorsMu.Lock()
+	validators = append(validators, v)
+	validatorsMu.Unlock()
+	return v
+}
+
+// Every validator in the process, so one revocation message reaches all of them (a service
+// typically builds several: auth middleware, docs gate, developer-key auth).
+var (
+	validatorsMu sync.Mutex
+	validators   []*APIKeyValidator
+)
+
+// InvalidateAPIKeyHash drops a key from every APIKeyValidator in this process. Services call it
+// from their subscription to auth-api's key-change broadcast (shared-events Broadcaster,
+// namespace "auth", topic "apikey.changed", payload = the key hash):
+//
+//	b := events.NewBroadcaster(log, natsConn, "auth")
+//	_ = b.Subscribe("apikey.changed", func(m events.BroadcastMessage) {
+//		authclient.InvalidateAPIKeyHash(string(m.Data))
+//	})
+func InvalidateAPIKeyHash(hash string) {
+	validatorsMu.Lock()
+	vs := append([]*APIKeyValidator(nil), validators...)
+	validatorsMu.Unlock()
+	for _, v := range vs {
+		v.InvalidateHash(hash)
 	}
 }
 

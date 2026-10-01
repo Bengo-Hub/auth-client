@@ -2,36 +2,40 @@ package authclient
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/hashicorp/golang-lru/v2/expirable"
+	"golang.org/x/sync/singleflight"
 )
 
 // APIKeyValidator validates API keys by checking them against auth-service.
 // Supports both service-to-service authentication and external API access.
+//
+// Results are cached per pod in a bounded, thread-safe LRU keyed by a SHA-256 of the key, so
+// raw keys are not kept in memory and the cache never grows past apiKeyCacheSize entries.
+// Before v0.15.0 this was a plain map with no lock: two concurrent X-API-Key requests could
+// crash the pod with "concurrent map writes", and every distinct key stayed in memory forever.
+// Concurrent misses for one key share a single call to auth-service, and rejected keys are
+// remembered briefly so a flood of bad keys cannot hammer auth-service.
 type APIKeyValidator struct {
 	authServiceURL string
 	httpClient     *http.Client
-	cache          map[string]*apiKeyInfo
-	cacheTTL       time.Duration
+	cache          *expirable.LRU[string, *APIKeyValidationResult]
+	rejected       *expirable.LRU[string, int]
+	flight         singleflight.Group
 }
 
-type apiKeyInfo struct {
-	clientID             string
-	tenantID             string
-	tenantSlug           string
-	scopes               []string
-	roles                []string
-	service              string
-	subscriptionPlan     string
-	subscriptionFeatures []string
-	subscriptionLimits   map[string]int
-	subscriptionStatus   string
-	environment          string
-	expiresAt            time.Time
-}
+const (
+	apiKeyCacheSize   = 5000
+	apiKeyCacheTTL    = 2 * time.Minute
+	apiKeyRejectedTTL = 30 * time.Second
+)
 
 // APIKeyValidationResult contains the full result of API key validation.
 type APIKeyValidationResult struct {
@@ -47,9 +51,7 @@ type APIKeyValidationResult struct {
 	SubscriptionStatus   string         `json:"subscription_status"`
 	// Environment is "sandbox" or "production" for a bng_app_* App credential (auth-api's
 	// ValidateAPIKeyResponse.Environment); "production" for a plain bng_* APIKey, which has no
-	// environment concept of its own. Previously silently dropped by this client (the same class
-	// of bug independently found and fixed in treasury-api's own local copy of this response
-	// shape) -- fixed here once, at the source, instead of re-patching every consumer.
+	// environment concept of its own.
 	Environment string `json:"environment"`
 }
 
@@ -61,9 +63,28 @@ func NewAPIKeyValidator(authServiceURL string, httpClient *http.Client) *APIKeyV
 	return &APIKeyValidator{
 		authServiceURL: strings.TrimSuffix(authServiceURL, "/"),
 		httpClient:     httpClient,
-		cache:          make(map[string]*apiKeyInfo),
-		cacheTTL:       5 * time.Minute,
+		cache:          expirable.NewLRU[string, *APIKeyValidationResult](apiKeyCacheSize, nil, apiKeyCacheTTL),
+		rejected:       expirable.NewLRU[string, int](apiKeyCacheSize, nil, apiKeyRejectedTTL),
 	}
+}
+
+// Invalidate drops one key from this pod's cache. Wire it to a revocation broadcast so a
+// revoked or downgraded key stops working on every pod at once instead of after the TTL.
+func (v *APIKeyValidator) Invalidate(apiKey string) {
+	v.InvalidateHash(HashAPIKey(apiKey))
+}
+
+// InvalidateHash drops a key by its HashAPIKey value (what a revocation event should carry,
+// so the raw key never travels over the bus).
+func (v *APIKeyValidator) InvalidateHash(hash string) {
+	v.cache.Remove(hash)
+	v.rejected.Remove(hash)
+}
+
+// InvalidateAll empties this pod's cache (e.g. on a tenant-wide key rotation event).
+func (v *APIKeyValidator) InvalidateAll() {
+	v.cache.Purge()
+	v.rejected.Purge()
 }
 
 // ValidateAPIKey validates an API key by checking it against auth-service.
@@ -79,29 +100,27 @@ func (v *APIKeyValidator) ValidateAPIKey(ctx context.Context, apiKey string) (cl
 
 // ValidateAPIKeyFull validates an API key and returns complete information including subscription data.
 func (v *APIKeyValidator) ValidateAPIKeyFull(ctx context.Context, apiKey string) (*APIKeyValidationResult, error) {
-	// Check cache first
-	if info, ok := v.cache[apiKey]; ok {
-		if time.Now().Before(info.expiresAt) {
-			return &APIKeyValidationResult{
-				ClientID:             info.clientID,
-				TenantID:             info.tenantID,
-				TenantSlug:           info.tenantSlug,
-				Scopes:               info.scopes,
-				Roles:                info.roles,
-				Service:              info.service,
-				SubscriptionPlan:     info.subscriptionPlan,
-				SubscriptionFeatures: info.subscriptionFeatures,
-				SubscriptionLimits:   info.subscriptionLimits,
-				SubscriptionStatus:   info.subscriptionStatus,
-				Environment:          info.environment,
-			}, nil
-		}
-		// Cache expired, remove it
-		delete(v.cache, apiKey)
+	h := HashAPIKey(apiKey)
+	if res, ok := v.cache.Get(h); ok {
+		return cloneResult(res), nil
+	}
+	if status, ok := v.rejected.Get(h); ok {
+		return nil, fmt.Errorf("invalid API key: status %d", status)
 	}
 
-	// Validate against auth-service
-	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/v1/admin/api-keys/validate", v.authServiceURL), nil)
+	out, err, _ := v.flight.Do(h, func() (any, error) {
+		return v.fetch(context.WithoutCancel(ctx), h, apiKey)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return cloneResult(out.(*APIKeyValidationResult)), nil
+}
+
+func (v *APIKeyValidator) fetch(ctx context.Context, h, apiKey string) (*APIKeyValidationResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.authServiceURL+"/api/v1/admin/api-keys/validate", nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -114,6 +133,11 @@ func (v *APIKeyValidator) ValidateAPIKeyFull(ctx context.Context, apiKey string)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		// Only a definite rejection is remembered; a 5xx from auth-service is retried next time.
+		switch resp.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+			v.rejected.Add(h, resp.StatusCode)
+		}
 		return nil, fmt.Errorf("invalid API key: status %d", resp.StatusCode)
 	}
 
@@ -121,24 +145,29 @@ func (v *APIKeyValidator) ValidateAPIKeyFull(ctx context.Context, apiKey string)
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
-
-	// Cache the result
-	v.cache[apiKey] = &apiKeyInfo{
-		clientID:             result.ClientID,
-		tenantID:             result.TenantID,
-		tenantSlug:           result.TenantSlug,
-		scopes:               result.Scopes,
-		roles:                result.Roles,
-		service:              result.Service,
-		subscriptionPlan:     result.SubscriptionPlan,
-		subscriptionFeatures: result.SubscriptionFeatures,
-		subscriptionLimits:   result.SubscriptionLimits,
-		subscriptionStatus:   result.SubscriptionStatus,
-		environment:          result.Environment,
-		expiresAt:            time.Now().Add(v.cacheTTL),
-	}
-
+	v.cache.Add(h, &result)
 	return &result, nil
+}
+
+// HashAPIKey is the cache identity of an API key (hex SHA-256).
+func HashAPIKey(apiKey string) string {
+	sum := sha256.Sum256([]byte(apiKey))
+	return hex.EncodeToString(sum[:])
+}
+
+// cloneResult returns a copy so callers cannot mutate the cached entry shared across requests.
+func cloneResult(r *APIKeyValidationResult) *APIKeyValidationResult {
+	c := *r
+	c.Scopes = append([]string(nil), r.Scopes...)
+	c.Roles = append([]string(nil), r.Roles...)
+	c.SubscriptionFeatures = append([]string(nil), r.SubscriptionFeatures...)
+	if r.SubscriptionLimits != nil {
+		c.SubscriptionLimits = make(map[string]int, len(r.SubscriptionLimits))
+		for k, val := range r.SubscriptionLimits {
+			c.SubscriptionLimits[k] = val
+		}
+	}
+	return &c
 }
 
 // ToClaims converts an API key validation result to Claims for consistent handling.

@@ -3,6 +3,7 @@ package authclient
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -52,6 +53,11 @@ func (e *Entitlements) UsesService(serviceTag string) bool {
 	return false
 }
 
+// ErrServiceNotEntitled is returned by tenant syncers and provisioning paths that refuse to create
+// data for a tenant whose plan does not cover the service. Event handlers treat it as "skip and
+// acknowledge", never as a failure to retry.
+var ErrServiceNotEntitled = errors.New("tenant is not subscribed to this service")
+
 // EntitlementClient answers "is service X part of tenant T's plan" for code paths that carry a
 // tenant id but no user JWT. One implementation for every service; do not copy it per service.
 type EntitlementClient struct {
@@ -90,6 +96,15 @@ func (c *EntitlementClient) UsesService(ctx context.Context, tenantID, serviceTa
 		return true
 	}
 	return c.Get(ctx, tenantID).UsesService(serviceTag)
+}
+
+// Require returns ErrServiceNotEntitled when tenantID's plan does not cover serviceTag, nil
+// otherwise (including when the plan could not be read, see UsesService).
+func (c *EntitlementClient) Require(ctx context.Context, tenantID, serviceTag string) error {
+	if c.UsesService(ctx, tenantID, serviceTag) {
+		return nil
+	}
+	return ErrServiceNotEntitled
 }
 
 // Get returns the cached snapshot for the tenant, or nil when it could not be fetched.

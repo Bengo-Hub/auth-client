@@ -56,6 +56,10 @@ type Claims struct {
 	// ERP feature has none of "erp" here, distinct from having zero of one specific feature
 	// within a module it does have. See RequireServiceAccess / HasServiceAccess.
 	ActiveServiceTags []string `json:"active_service_tags,omitempty"`
+	// UserServices is the services this member gets in this tenant (auth-api access rules; tag
+	// must match auth-api token minting): ["*"] for every service. Absent on older tokens or when
+	// auth-api could not decide. See AllowsUserService.
+	UserServices []string `json:"user_services,omitempty"`
 
 	// Billing model and demo flags — used for subscription gate bypass
 	BillingMode  string `json:"billing_mode,omitempty"`      // "service_charge" bypasses subscription gating

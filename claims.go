@@ -1,6 +1,7 @@
 package authclient
 
 import (
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -34,6 +35,9 @@ type Claims struct {
 	OutletCode    string `json:"outlet_code,omitempty"`
 	OutletUseCase string `json:"outlet_use_case,omitempty"`
 	IsHQUser      bool   `json:"is_hq_user,omitempty"`
+	// OutletIDs limits a management member to these outlets. Empty means no limit from this claim:
+	// a manager without it stays tenant-wide, and other staff follow OutletID as before.
+	OutletIDs []string `json:"outlet_ids,omitempty"`
 
 	// RBAC - Global roles from auth-service
 	Roles []string `json:"roles,omitempty"`
@@ -135,7 +139,43 @@ func (c *Claims) GetOutletID() string {
 // CanAccessAllOutlets returns true when the user is not scoped to a single outlet.
 // Platform owners, tenant admins, and is_hq_user users can access data across all outlets.
 func (c *Claims) CanAccessAllOutlets() bool {
+	if c.OutletRestricted() {
+		return false
+	}
 	return c.IsPlatformOwner || c.IsAdmin() || c.IsHQUser
+}
+
+// OutletRestricted reports a member limited to the outlets in OutletIDs. It outranks every "this role
+// sees all outlets" rule a service keeps, so services check it first. Platform owners and tenant
+// admins are always tenant-wide.
+func (c *Claims) OutletRestricted() bool {
+	return len(c.OutletIDs) > 0 && !c.IsPlatformOwner && !c.IsAdmin()
+}
+
+// AllowsOutlet reports whether a restricted member may work in outletID. Anyone not restricted gets
+// true here: their own service rules still apply.
+func (c *Claims) AllowsOutlet(outletID string) bool {
+	if !c.OutletRestricted() {
+		return true
+	}
+	for _, id := range c.OutletIDs {
+		if strings.EqualFold(id, outletID) {
+			return true
+		}
+	}
+	return false
+}
+
+// RestrictedHomeOutlet is where a restricted member works when a request names no outlet: the token's
+// outlet when allowed, else the first assigned. Empty when not restricted.
+func (c *Claims) RestrictedHomeOutlet() string {
+	if !c.OutletRestricted() {
+		return ""
+	}
+	if c.OutletID != "" && c.AllowsOutlet(c.OutletID) {
+		return c.OutletID
+	}
+	return c.OutletIDs[0]
 }
 
 // HasScope checks if the token has a specific scope.

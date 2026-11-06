@@ -65,6 +65,13 @@ type Claims struct {
 	// auth-api could not decide. See AllowsUserService.
 	UserServices []string `json:"user_services,omitempty"`
 
+	// AMR lists how the session was signed in (auth-api docs/developer-api.md): pwd, otp, fed, hwk,
+	// totp, and mfa once a second factor was verified. Absent on tokens from before the claim existed.
+	AMR []string `json:"amr,omitempty"`
+	// MFAEnrollmentRequired marks an enrolment-only token: the person must set up an authenticator
+	// app. It carries no roles or permissions and opens nothing outside auth-api's setup routes.
+	MFAEnrollmentRequired bool `json:"mfa_enrollment_required,omitempty"`
+
 	// Billing model and demo flags — used for subscription gate bypass
 	BillingMode  string `json:"billing_mode,omitempty"`      // "service_charge" bypasses subscription gating
 	IsDemo       bool   `json:"is_demo,omitempty"`           // true for demo tenant/users, bypasses subscription gating
@@ -247,6 +254,20 @@ func (c *Claims) HasAllPermissions(permissions ...string) bool {
 // ============================================================================
 
 // HasRole checks if the token has a specific role.
+// HasMFA reports whether the session proved a second factor (amr contains "mfa"). A token without
+// amr has not.
+func (c *Claims) HasMFA() bool {
+	if c == nil {
+		return false
+	}
+	for _, m := range c.AMR {
+		if m == "mfa" {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *Claims) HasRole(role string) bool {
 	for _, r := range c.Roles {
 		if r == role {

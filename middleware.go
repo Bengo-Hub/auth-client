@@ -3,6 +3,7 @@ package authclient
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"net/http"
 	"strconv"
@@ -37,11 +38,13 @@ func NewAuthMiddlewareWithAPIKey(validator *Validator, apiKeyValidator *APIKeyVa
 func (a *AuthMiddleware) RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
+		var jwtErr error
 
 		// Try JWT Bearer token first
 		if authHeader != "" && strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
 			tokenStr := strings.TrimSpace(authHeader[7:])
 			claims, err := a.validator.ValidateToken(tokenStr)
+			jwtErr = err
 			if err == nil {
 				ctx := context.WithValue(r.Context(), claimsContextKey, claims)
 				next.ServeHTTP(w, r.WithContext(ctx))
@@ -66,6 +69,10 @@ func (a *AuthMiddleware) RequireAuth(next http.Handler) http.Handler {
 			}
 		}
 
+		if errors.Is(jwtErr, ErrKeysUnavailable) {
+			writeKeysUnavailable(w)
+			return
+		}
 		writeAuthError(w, http.StatusUnauthorized, "missing bearer token or API key")
 	})
 }
@@ -83,6 +90,10 @@ func Middleware(validator *Validator) func(http.Handler) http.Handler {
 
 			tokenStr := strings.TrimSpace(authHeader[7:])
 			claims, err := validator.ValidateToken(tokenStr)
+			if errors.Is(err, ErrKeysUnavailable) {
+				writeKeysUnavailable(w)
+				return
+			}
 			if err != nil {
 				writeAuthError(w, http.StatusUnauthorized, "invalid token: "+err.Error())
 				return
@@ -144,6 +155,19 @@ func RequireAllScopes(scopes ...string) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// writeKeysUnavailable answers a bearer request that could not be checked because the
+// validator has no signing keys yet (auth-api unreachable since startup). 503 with
+// Retry-After tells clients to retry instead of treating the session as signed out.
+func writeKeysUnavailable(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", "5")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"error": "authentication temporarily unavailable, signing keys not loaded yet",
+		"code":  "auth_unavailable",
+	})
 }
 
 func writeAuthError(w http.ResponseWriter, status int, message string) {

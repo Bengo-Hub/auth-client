@@ -7,10 +7,13 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"math/big"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -28,7 +31,38 @@ type Config struct {
 	HTTPClient      *http.Client
 	RedisClient     *redis.Client // Optional: Redis client for session caching
 	SessionCacheTTL time.Duration // Duration to cache validated sessions
+	// InitialFetchTimeout bounds how long NewValidator retries the first JWKS fetch, with
+	// exponential backoff, before it returns without keys. Zero means
+	// DefaultInitialFetchTimeout; a negative value means one attempt only. Keep it below
+	// the time the service's liveness probe allows before the HTTP server is listening.
+	InitialFetchTimeout time.Duration
+	// Logf receives startup and recovery messages about the JWKS. Nil uses the standard
+	// log package.
+	Logf func(format string, args ...any)
 }
+
+// DefaultInitialFetchTimeout is how long NewValidator waits for auth-api's JWKS when
+// Config.InitialFetchTimeout is zero. After a node reboot every service starts at once
+// and auth-api is often not ready yet; past this wait the service starts anyway and
+// loads the keys in the background. 30s stays inside the tightest liveness budget in the
+// fleet (about 75s from container start, part of it spent on migrations).
+const DefaultInitialFetchTimeout = 30 * time.Second
+
+const (
+	initialBackoff      = 1 * time.Second
+	maxInitialBackoff   = 10 * time.Second
+	recoveryBackoffBase = 2 * time.Second
+	maxRecoveryBackoff  = 30 * time.Second
+	// onDemandFetchGap throttles the fetch a request triggers while no keys are
+	// loaded, so a burst of requests during an auth-api outage does not turn into a
+	// burst of JWKS requests.
+	onDemandFetchGap = 2 * time.Second
+)
+
+// ErrKeysUnavailable means the validator has no signing keys yet because the JWKS could
+// not be fetched. Tokens are rejected until the background refresh loads the keys;
+// the HTTP middleware answers 503 for it rather than 401.
+var ErrKeysUnavailable = errors.New("JWKS signing keys not loaded yet")
 
 // DefaultConfig returns a config with sensible defaults.
 func DefaultConfig(jwksURL, issuer, audience string) Config {
@@ -52,10 +86,32 @@ type Validator struct {
 	fetchGroup  singleflight.Group
 	parser      *jwt.Parser
 	stopRefresh chan struct{}
+	stopOnce    sync.Once
+	// lastOnDemand is the unix-nano time of the last request-triggered fetch made while
+	// no keys were loaded (see onDemandFetchGap).
+	lastOnDemand atomic.Int64
 }
 
 // NewValidator creates a new JWT validator.
+//
+// The first JWKS fetch is retried with exponential backoff for up to
+// Config.InitialFetchTimeout. If auth-api still has not answered, NewValidator returns
+// a working validator without keys instead of an error: tokens are rejected with
+// ErrKeysUnavailable and a background loop keeps retrying until the keys load. A
+// service therefore no longer exits at startup when auth-api is late, which after a
+// node reboot left services in CrashLoopBackOff for minutes. The error return is kept
+// for compatibility and is always nil.
 func NewValidator(config Config) (*Validator, error) {
+	if config.HTTPClient == nil {
+		config.HTTPClient = &http.Client{Timeout: 10 * time.Second}
+	}
+	if config.RefreshInterval <= 0 {
+		config.RefreshInterval = 5 * time.Minute
+	}
+	if config.Logf == nil {
+		config.Logf = log.Printf
+	}
+
 	v := &Validator{
 		config:      config,
 		keys:        make(map[string]*rsa.PublicKey),
@@ -63,15 +119,56 @@ func NewValidator(config Config) (*Validator, error) {
 		stopRefresh: make(chan struct{}),
 	}
 
-	// Initial fetch
-	if err := v.fetchJWKS(context.Background()); err != nil {
-		return nil, fmt.Errorf("initial JWKS fetch: %w", err)
+	if err := v.initialFetch(); err != nil {
+		v.config.Logf("authclient: JWKS from %s not available at startup (%v); starting without signing keys, tokens are rejected until a background retry loads them", v.config.JWKSUrl, err)
 	}
 
-	// Start background refresh
 	go v.refreshLoop()
 
 	return v, nil
+}
+
+// KeysLoaded reports whether the validator holds at least one signing key. A service
+// can use it in its readiness check so that it takes traffic only once tokens can be
+// validated.
+func (v *Validator) KeysLoaded() bool {
+	v.keysMu.RLock()
+	defer v.keysMu.RUnlock()
+	return len(v.keys) > 0
+}
+
+// initialFetch retries the first JWKS fetch with exponential backoff until it succeeds
+// or the configured timeout runs out, and returns the last error in that case.
+func (v *Validator) initialFetch() error {
+	timeout := v.config.InitialFetchTimeout
+	if timeout == 0 {
+		timeout = DefaultInitialFetchTimeout
+	}
+	deadline := time.Now().Add(timeout)
+	backoff := initialBackoff
+	for attempt := 1; ; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		err := v.fetchJWKS(ctx)
+		cancel()
+		if err == nil {
+			if attempt > 1 {
+				v.config.Logf("authclient: JWKS loaded on attempt %d", attempt)
+			}
+			return nil
+		}
+		remaining := time.Until(deadline)
+		if timeout < 0 || remaining <= 0 {
+			return err
+		}
+		wait := min(backoff, remaining)
+		v.config.Logf("authclient: JWKS fetch attempt %d failed (%v), retrying in %s", attempt, err, wait)
+		select {
+		case <-time.After(wait):
+		case <-v.stopRefresh:
+			return err
+		}
+		backoff = min(backoff*2, maxInitialBackoff)
+	}
 }
 
 // ValidateToken validates a JWT token string and returns claims.
@@ -92,6 +189,23 @@ func (v *Validator) ValidateToken(tokenString string) (*Claims, error) {
 		}
 
 		key := v.getKey(kid)
+		if key == nil && !v.KeysLoaded() {
+			// No keys at all: auth-api was not reachable at startup or since. Fetch once,
+			// throttled, and report ErrKeysUnavailable so the caller answers 503.
+			if !v.claimOnDemandFetch() {
+				return nil, ErrKeysUnavailable
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			err := v.fetchJWKS(ctx)
+			cancel()
+			if err != nil {
+				return nil, fmt.Errorf("%w: %v", ErrKeysUnavailable, err)
+			}
+			if !v.KeysLoaded() {
+				return nil, ErrKeysUnavailable
+			}
+			key = v.getKey(kid)
+		}
 		if key == nil {
 			// Try to refresh JWKS
 			if err := v.fetchJWKS(context.Background()); err != nil {
@@ -260,23 +374,50 @@ func (v *Validator) fetchJWKS(ctx context.Context) error {
 	return err
 }
 
-func (v *Validator) refreshLoop() {
-	ticker := time.NewTicker(v.config.RefreshInterval)
-	defer ticker.Stop()
+// claimOnDemandFetch reports whether a request may trigger a JWKS fetch now, allowing at
+// most one per onDemandFetchGap while no keys are loaded.
+func (v *Validator) claimOnDemandFetch() bool {
+	now := time.Now().UnixNano()
+	last := v.lastOnDemand.Load()
+	if now-last < int64(onDemandFetchGap) {
+		return false
+	}
+	return v.lastOnDemand.CompareAndSwap(last, now)
+}
 
+// refreshLoop refreshes the JWKS every RefreshInterval. While no keys are loaded it
+// retries sooner, backing off from recoveryBackoffBase to maxRecoveryBackoff, so a
+// validator that started without keys recovers soon after auth-api comes up.
+func (v *Validator) refreshLoop() {
+	retry := recoveryBackoffBase
 	for {
+		wait := v.config.RefreshInterval
+		missing := !v.KeysLoaded()
+		if missing {
+			wait = retry
+		}
+		timer := time.NewTimer(wait)
 		select {
-		case <-ticker.C:
+		case <-timer.C:
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			_ = v.fetchJWKS(ctx)
+			err := v.fetchJWKS(ctx)
 			cancel()
+			if missing {
+				if err == nil && v.KeysLoaded() {
+					v.config.Logf("authclient: JWKS loaded by background retry, tokens are accepted again")
+					retry = recoveryBackoffBase
+				} else {
+					retry = min(retry*2, maxRecoveryBackoff)
+				}
+			}
 		case <-v.stopRefresh:
+			timer.Stop()
 			return
 		}
 	}
 }
 
-// Stop stops the background refresh loop.
+// Stop stops the background refresh loop. It is safe to call more than once.
 func (v *Validator) Stop() {
-	close(v.stopRefresh)
+	v.stopOnce.Do(func() { close(v.stopRefresh) })
 }
